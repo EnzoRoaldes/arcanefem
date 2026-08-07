@@ -337,13 +337,21 @@ _assembleBilinearOperator()
     auto in_cell_lambda = ax::viewIn(command, m_cell_lambda);
 
     if (mesh()->dimension() == 2)
-      if (m_matrix_format == "BSR")
-        m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+      if (m_matrix_format == "BSR") {
+        if(m_hex_quad_mesh)
+          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return _computeElementMatrixQuad4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+        else
+          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+      }
       else
         m_bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });
     else
-      if (m_matrix_format == "BSR")
-        m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+      if (m_matrix_format == "BSR") {
+        if(m_hex_quad_mesh)
+          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return _computeElementMatrixHexa8Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+        else
+          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+      }
       else
         m_bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });
   }
