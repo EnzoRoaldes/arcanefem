@@ -171,6 +171,31 @@ _doStationarySolve()
 void FemModuleFourier::
 _getMaterialParameters()
 {
+  /// VERSION ORIGINALE
+  // info() << "[ArcaneFem-Info] Started module _getMaterialParameters()";
+  // Real elapsedTime = platform::getRealTime();
+
+  // lambda = options()->lambda();
+  // qdot = options()->qdot();
+
+  // m_cell_lambda.fill(lambda);
+
+  // for (const auto& bs : options()->materialProperty()) {
+  //   CellGroup group = bs->volume();
+  //   Real value = bs->lambda();
+  //   info() << "Lambda for group= " << group.name() << " v=" << value;
+
+  //   ENUMERATE_ (Cell, icell, group) {
+  //     Cell cell = *icell;
+  //     m_cell_lambda[cell] = value;
+  //   }
+  // }
+
+  // elapsedTime = platform::getRealTime() - elapsedTime;
+  // ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), "get-material-params", elapsedTime);
+
+
+  /// VERSION SKYSCRAPPER
   info() << "[ArcaneFem-Info] Started module _getMaterialParameters()";
   Real elapsedTime = platform::getRealTime();
 
@@ -179,16 +204,36 @@ _getMaterialParameters()
 
   m_cell_lambda.fill(lambda);
 
-  for (const auto& bs : options()->materialProperty()) {
-    CellGroup group = bs->volume();
-    Real value = bs->lambda();
-    info() << "Lambda for group= " << group.name() << " v=" << value;
+  ENUMERATE_(Cell, icell, allCells()) {
+    Cell cell = *icell;
 
-    ENUMERATE_ (Cell, icell, group) {
-      Cell cell = *icell;
-      m_cell_lambda[cell] = value;
-    }
+    // Compute cell center
+    Real3 center = Real3::zero();
+
+    for (Node node : cell.nodes())
+      center += m_node_coord[node];
+
+    const Real nb_nodes = static_cast<Real>(std::size(cell.nodes()));
+    center /= nb_nodes;
+    
+    const Real x = center.x;
+    const Real y = center.y;
+
+    // Position in the conceptual 10 x 10 SKY2D grid
+    const Int32 ix = static_cast<Int32>(std::floor(10.0 * x));
+    const Int32 iy = static_cast<Int32>(std::floor(10.0 * y));
+
+    // Skyscraper coefficient
+    if ((ix % 2 == 1) && (iy % 2 == 1))
+      m_cell_lambda[cell] = 1000.0 * (iy + 1);
+
+      // info() << "SKY CELL: x=" << center.x
+      //      << " y=" << center.y
+      //      << " ix=" << ix
+      //      << " iy=" << iy
+      //      << " lambda=" << m_cell_lambda[cell];
   }
+
 
   elapsedTime = platform::getRealTime() - elapsedTime;
   ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), "get-material-params", elapsedTime);
