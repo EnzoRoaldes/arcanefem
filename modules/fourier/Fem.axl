@@ -48,6 +48,10 @@
       <description>Boolean to enable linear system assembly.</description>
     </simple>
 
+    <simple name="use-skyscraper" type="bool" default="false">
+      <description>Enable the SKY2D heterogeneous coefficient distribution</description>
+    </simple>
+
     <!-- - - - - - material-property - - - - -->
     <complex name  = "material-property"
              type  = "MaterialProperty"
