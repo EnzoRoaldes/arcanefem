@@ -346,6 +346,7 @@ _preallocateMatrix()
 
   PetscCallAbort(mpi_comm, KSPCreate(mpi_comm, &m_petsc_solver_context));
   PetscCallAbort(mpi_comm, KSPSetOperators(m_petsc_solver_context, m_petsc_matrix, m_petsc_matrix));
+  PetscCallAbort(mpi_comm, KSPSetErrorIfNotConverged(m_petsc_solver_context, PETSC_TRUE)); // To catch errors if the solver does not converge
   PetscCallAbort(mpi_comm, KSPSetFromOptions(m_petsc_solver_context));
 }
 
