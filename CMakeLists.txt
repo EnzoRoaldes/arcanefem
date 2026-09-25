@@ -11,6 +11,9 @@ find_package(Arcane 3.14.14 REQUIRED)
 find_package(MEDFile)
 arcane_accelerator_enable()
 
+find_package(Arccon REQUIRED)
+list(APPEND CMAKE_MODULE_PATH ${ARCCON_MODULE_PATH})
+
 enable_testing()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Utils.cmake)
 

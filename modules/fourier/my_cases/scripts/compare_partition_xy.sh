@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+
+# Compare different Cartesian MPI decompositions for the same number of ranks.
+# Usage: ./compare_partition_xy.sh JOB_ID
+
+set -euo pipefail
+
+JOB_ID="${1:?Usage: $0 JOB_ID}"
+NB_PROCS=96
+
+# Mesh and solver parameters.
+MESH_N=5000
+MESH_M=5000
+MAX_IT=500
+R_TOL=1e-10
+PC="gamg"
+SOLVER="cg"
+AMG_THRESHOLD=0.01
+
+# Adapt this if the script is not stored in my_cases/scripts/.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FOURIER_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+ARC_FILE="$FOURIER_DIR/my_cases/inputs/conduction.heterogeneous.arc"
+OUTPUT_DIR="$FOURIER_DIR/my_cases/outputs/partition_xy_N${NB_PROCS}"
+RESULTS_FILE="$OUTPUT_DIR/results.csv"
+
+# Decompositions tested for NB_PROC MPI processes.
+PARTITIONS=(
+  "1 96"
+  "2 48"
+  "4 24"
+  "8 12"
+  "12 8"
+  "24 4"
+  "48 2"
+  "96 1"
+)
+
+module load craype-x86-trento
+module load craype-accel-amd-gfx90a
+module load PrgEnv-amd
+module load cmake/3.27.9
+module load rocm/6.4.3
+module load cray-hdf5-parallel/1.14.3.7
+
+mkdir -p "$OUTPUT_DIR"
+
+if [[ ! -x "$FOURIER_DIR/Fourier" ]]; then
+  echo "Error: executable not found: $FOURIER_DIR/Fourier" >&2
+  exit 1
+fi
+
+if [[ ! -f "$ARC_FILE" ]]; then
+  echo "Error: Arcane case file not found: $ARC_FILE" >&2
+  exit 1
+fi
+
+cd "$FOURIER_DIR"
+
+printf '%s\n' \
+  "nx,ny,mpi_processes,wall_time_s,compute_s,solve_linear_system_s,iterations,exit_code" \
+  > "$RESULTS_FILE"
+
+# Extract the last value associated with an exact ArcaneFEM timer name.
+timer_value()
+{
+  local timer_name="$1"
+  local log_file="$2"
+
+  awk -v wanted="$timer_name" '
+    match($0, /\[ArcaneFem-Timer\][[:space:]]+[^[:space:]=]+/) {
+      name = substr($0, RSTART, RLENGTH)
+      sub(/^.*\][[:space:]]+/, "", name)
+
+      if (name == wanted) {
+        split($0, fields, "=")
+        value = fields[length(fields)]
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        last = value
+      }
+    }
+
+    END {
+      if (last != "")
+        print last
+    }
+  ' "$log_file"
+}
+
+for partition in "${PARTITIONS[@]}"; do
+  read -r NX NY <<< "$partition"
+
+  if (( NX * NY != NB_PROCS )); then
+    echo \
+      "Error: nx=$NX and ny=$NY do not use $NB_PROCS MPI processes" \
+      >&2
+    exit 1
+  fi
+
+  LOG_FILE="$OUTPUT_DIR/nx${NX}_ny${NY}.log"
+
+  echo "=================================================="
+  echo "nx=$NX, ny=$NY, MPI processes=$NB_PROCS"
+  echo "=================================================="
+
+  START_NS="$(date +%s%N)"
+
+  # Disable immediate exit temporarily so that the return code can be saved.
+  set +e
+
+  srun \
+    --jobid="$JOB_ID" \
+    --ntasks="$NB_PROCS" \
+    --cpus-per-task=1 \
+    ./Fourier "$ARC_FILE" \
+    -A,//fem/petsc-flags="-ksp_monitor -ksp_converged_reason \
+    -ksp_max_it $MAX_IT -ksp_rtol $R_TOL -ksp_view \
+    -pc_type $PC -pc_gamg_threshold $AMG_THRESHOLD -ksp_type $SOLVER -ksp_initial_guess_nonzero" \
+    -A,//meshes/mesh/generator/nb-part-x="$NX" \
+    -A,//meshes/mesh/generator/nb-part-y="$NY" \
+    -A,//meshes/mesh/generator/x/n="$MESH_N" \
+    -A,//meshes/mesh/generator/x/length=1.0 \
+    -A,//meshes/mesh/generator/y/n="$MESH_M" \
+    -A,//meshes/mesh/generator/y/length=1.0 \
+    -A,//fem/linear-system/@name=PetscLinearSystem \
+    2>&1 | tee "$LOG_FILE"
+
+  RUN_STATUS=${PIPESTATUS[0]}
+
+  set -e
+
+  END_NS="$(date +%s%N)"
+
+  WALL_TIME="$(
+    awk -v start="$START_NS" -v end="$END_NS" \
+      'BEGIN {
+        printf "%.6f", (end - start) / 1000000000
+      }'
+  )"
+
+  COMPUTE_TIME="$(timer_value "compute" "$LOG_FILE")"
+  SOLVE_TIME="$(timer_value "solve-linear-system" "$LOG_FILE")"
+
+  # Example PETSc line:
+  # Linear solve converged due to CONVERGED_RTOL iterations 125
+  mapfile -t ITERATIONS < <(
+    grep -Eo 'iterations[[:space:]]+[0-9]+' "$LOG_FILE" |
+      awk '{print $2}'
+  )
+
+  ITERATION_COUNT="${ITERATIONS[0]:-}"
+
+  printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$NX" \
+    "$NY" \
+    "$NB_PROCS" \
+    "$WALL_TIME" \
+    "$COMPUTE_TIME" \
+    "$SOLVE_TIME" \
+    "$ITERATION_COUNT" \
+    "$RUN_STATUS" \
+    >> "$RESULTS_FILE"
+
+  echo
+  echo "Result:"
+  echo "  wall time            = ${WALL_TIME} s"
+  echo "  compute time         = ${COMPUTE_TIME:-NA} s"
+  echo "  linear solve time    = ${SOLVE_TIME:-NA} s"
+  echo "  iterations           = ${ITERATION_COUNT:-NA}"
+  echo "  exit code            = $RUN_STATUS"
+  echo
+done
+
+echo "Comparison written to:"
+echo "$RESULTS_FILE"
+echo
+
+column -s, -t "$RESULTS_FILE" 2>/dev/null || cat "$RESULTS_FILE"

@@ -48,6 +48,9 @@ file(COPY "check" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 # Copy the inputs folder containing the arc files
 file(COPY "inputs" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
+# Copy the my_cases folder
+file(COPY "my_cases" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
 # Copy the mesh files into meshes directory
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/meshes)
 set(MESH_FILES
