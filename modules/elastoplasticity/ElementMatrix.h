@@ -87,20 +87,15 @@ RealMatrix<6, 6> FemModuleElastoplasticity::_computeElementMatrixTria3(Cell cell
   Real3 dxu = ArcaneFemFunctions::FeOperation2D::computeGradientXTria3(cell, m_node_coord);
   Real3 dyu = ArcaneFemFunctions::FeOperation2D::computeGradientYTria3(cell, m_node_coord);
   Real area = ArcaneFemFunctions::MeshOperation::computeAreaTria3(cell, m_node_coord);
-  if (m_gp_material_tensor_strategy == "local") {
-    return computeElementMatrixTria3Base(dxu, dyu, area, m_C_tang_2d);
-  } else {
-    RealMatrix<3, 3> C_tang;
-    for (Int32 iGP = 0; iGP < m_nGP; ++iGP) {
-      for (Int32 ix = 0; ix < 3; ++ix) {
-        for (Int32 iy = 0; iy < 3; ++iy) {
-          C_tang(ix, iy) = m_C_tang_gp(cell, iGP, ix, iy);
-        }
-      }
-    }
-    return computeElementMatrixTria3Base(dxu, dyu, area, C_tang);
-  }
+  RealMatrix<3, 3> C_tang;
 
+  Int8 iGP = 0;
+  for (Int8 ix = 0; ix < 3; ++ix) {
+    for (Int8 iy = 0; iy < 3; ++iy) {
+      C_tang(ix, iy) = m_C_tang_gp(cell, iGP, ix, iy);
+    }
+  }
+  return computeElementMatrixTria3Base(dxu, dyu, area, C_tang);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -191,13 +186,13 @@ ARCCORE_HOST_DEVICE RealMatrix<2, 6> computeElementVectorTria3Gpu(CellLocalId ce
 
 ARCCORE_HOST_DEVICE RealMatrix<12, 12> computeElementMatrixTetra4Base(Real4 dxu, Real4 dyu, Real4 dzu, Real volume, RealMatrix<6, 6> C_tang)
 {
-  RealVector<12> epsxx = { dxu[0], 0., 0.,    dxu[1], 0., 0.,    dxu[2], 0., 0.,    dxu[3], 0., 0. };
-  RealVector<12> epsyy = { 0., dyu[0], 0.,    0., dyu[1], 0.,    0., dyu[2], 0.,    0., dyu[3], 0. };
-  RealVector<12> epszz = { 0., 0., dzu[0],    0., 0., dzu[1],    0., 0., dzu[2],    0., 0., dzu[3] };
+  RealVector<12> epsxx = { { dxu[0], 0., 0., dxu[1], 0., 0., dxu[2], 0., 0., dxu[3], 0., 0. } };
+  RealVector<12> epsyy = { { 0., dyu[0], 0., 0., dyu[1], 0., 0., dyu[2], 0., 0., dyu[3], 0. } };
+  RealVector<12> epszz = { { 0., 0., dzu[0], 0., 0., dzu[1], 0., 0., dzu[2], 0., 0., dzu[3] } };
 
-  RealVector<12> epsyz = { 0., dzu[0], dyu[0],    0., dzu[1], dyu[1],    0., dzu[2], dyu[2],    0., dzu[3], dyu[3] };
-  RealVector<12> epszx = { dzu[0], 0., dxu[0],    dzu[1], 0., dxu[1],    dzu[2], 0., dxu[2],    dzu[3], 0., dxu[3] };
-  RealVector<12> epsxy = { dyu[0], dxu[0], 0.,    dyu[1], dxu[1], 0.,    dyu[2], dxu[2], 0.,    dyu[3], dxu[3], 0. };
+  RealVector<12> epsyz = { { 0., dzu[0], dyu[0], 0., dzu[1], dyu[1], 0., dzu[2], dyu[2], 0., dzu[3], dyu[3] } };
+  RealVector<12> epszx = { { dzu[0], 0., dxu[0], dzu[1], 0., dxu[1], dzu[2], 0., dxu[2], dzu[3], 0., dxu[3] } };
+  RealVector<12> epsxy = { { dyu[0], dxu[0], 0., dyu[1], dxu[1], 0., dyu[2], dxu[2], 0., dyu[3], dxu[3], 0. } };
 
   // ∫∫∫ C_tang11 ∂𝑢𝑥/∂𝑥 ∂𝑣𝑥/∂𝑥 + C_tang12 ∂𝑢𝑦/∂𝑦 ∂𝑣𝑥/∂𝑥 + C_tang13 ∂𝑢𝑧/∂𝑧 ∂𝑣𝑥/∂𝑥 + C_tang14 (∂𝑢𝑧/∂𝑦 + ∂𝑢𝑦/∂𝑧) ∂𝑣𝑥/∂𝑥 + C_tang15 (∂𝑢𝑥/∂𝑧 + ∂𝑢𝑧/∂𝑥) ∂𝑣𝑥/∂𝑥 + C_tang16 (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) ∂𝑣𝑥/∂𝑥
   RealMatrix<12, 12> sigmaXepsxx = (C_tang(0, 0) * epsxx + C_tang(0, 1) * epsyy + C_tang(0, 2) * epszz + C_tang(0, 3) * epsyz + C_tang(0, 4) * epszx + C_tang(0, 5) * epsxy) ^ epsxx;
@@ -212,7 +207,7 @@ ARCCORE_HOST_DEVICE RealMatrix<12, 12> computeElementMatrixTetra4Base(Real4 dxu,
   // ∫∫∫ C_tang16 ∂𝑢𝑥/∂𝑥 (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) + C_tang26 ∂𝑢𝑧/∂𝑦 (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) + C_tang36 ∂𝑢𝑧/∂𝑧 (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) + C_tang46 (∂𝑢𝑧/∂𝑦 + ∂𝑢𝑦/∂𝑧) (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) + C_tang56 (∂𝑢𝑥/∂𝑧 + ∂𝑢𝑧/∂𝑥) (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) + C_tang66 (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦)
   RealMatrix<12, 12> sigmaXepsxy = (C_tang(0, 5) * epsxx + C_tang(1, 5) * epsyy + C_tang(2, 5) * epszz + C_tang(3, 5) * epsyz + C_tang(4, 5) * epszx + C_tang(5, 5) * epsxy) ^ epsxy;
 
-  return volume * ( sigmaXepsxx + sigmaXepsyy + sigmaXepszz + sigmaXepsyz + sigmaXepszx + sigmaXepsxy);
+  return volume * (sigmaXepsxx + sigmaXepsyy + sigmaXepszz + sigmaXepsyz + sigmaXepszx + sigmaXepsxy);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -226,30 +221,72 @@ RealMatrix<12, 12> FemModuleElastoplasticity::_computeElementMatrixTetra4(Cell c
 
   Real volume = ArcaneFemFunctions::MeshOperation::computeVolumeTetra4(cell, m_node_coord);
 
-  if (m_gp_material_tensor_strategy == "local") {
-    return computeElementMatrixTetra4Base(dxu, dyu, dzu, volume, m_C_tang_3d);
-  } else {
-    RealMatrix<6, 6> C_tang_3d;
-    Int8 iGP = 0;
-    for (Int32 ix = 0; ix < 6; ++ix) {
-      for (Int32 iy = 0; iy < 6; ++iy) {
-        C_tang_3d(ix, iy) = m_C_tang_gp(cell, iGP, ix, iy);
-      }
+  RealMatrix<6, 6> C_tang_3d;
+  Int8 iGP = 0;
+  for (Int8 ix = 0; ix < 6; ++ix) {
+    for (Int8 iy = 0; iy < 6; ++iy) {
+      C_tang_3d(ix, iy) = m_C_tang_gp(cell, iGP, ix, iy);
     }
-    return computeElementMatrixTetra4Base(dxu, dyu, dzu, volume, C_tang_3d);
   }
+  return computeElementMatrixTetra4Base(dxu, dyu, dzu, volume, C_tang_3d);
 }
 
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
 
-ARCCORE_HOST_DEVICE RealMatrix<12, 12> computeElementMatrixTetra4Gpu(CellLocalId cell_lid, const IndexedCellNodeConnectivityView& cn_cv, const Accelerator::VariableNodeReal3InView& in_node_coord, RealMatrix<6, 6> C_tang)
+ARCCORE_HOST_DEVICE RealMatrix<12, 12> computeElementMatrixTetra4Gpu(CellLocalId cell_lid, const IndexedCellNodeConnectivityView& cn_cv, const Accelerator::VariableNodeReal3InView& in_node_coord, const Accelerator::MeshMDVariableInView<Cell, double, ExtentsV<int, -1, -1, -1>>& in_C_tang)
 {
   Real4 dxu = Arcane::FemUtils::Gpu::FeOperation3D::computeGradientXTetra4(cell_lid, cn_cv, in_node_coord);
   Real4 dyu = Arcane::FemUtils::Gpu::FeOperation3D::computeGradientYTetra4(cell_lid, cn_cv, in_node_coord);
   Real4 dzu = Arcane::FemUtils::Gpu::FeOperation3D::computeGradientZTetra4(cell_lid, cn_cv, in_node_coord);
 
   Real volume = Arcane::FemUtils::Gpu::MeshOperation::computeVolumeTetra4(cell_lid, cn_cv, in_node_coord);
+
+  RealMatrix<6, 6> C_tang;
+  Int8 iGP = 0;
+  // a flattened sequence is faster than a for loop on GPUs
+  C_tang(0, 0) = in_C_tang(cell_lid, iGP, 0, 0);
+  C_tang(0, 1) = in_C_tang(cell_lid, iGP, 0, 1);
+  C_tang(0, 2) = in_C_tang(cell_lid, iGP, 0, 2);
+  C_tang(0, 3) = in_C_tang(cell_lid, iGP, 0, 3);
+  C_tang(0, 4) = in_C_tang(cell_lid, iGP, 0, 4);
+  C_tang(0, 5) = in_C_tang(cell_lid, iGP, 0, 5);
+
+  C_tang(1, 0) = in_C_tang(cell_lid, iGP, 1, 0);
+  C_tang(1, 1) = in_C_tang(cell_lid, iGP, 1, 1);
+  C_tang(1, 2) = in_C_tang(cell_lid, iGP, 1, 2);
+  C_tang(1, 3) = in_C_tang(cell_lid, iGP, 1, 3);
+  C_tang(1, 4) = in_C_tang(cell_lid, iGP, 1, 4);
+  C_tang(1, 5) = in_C_tang(cell_lid, iGP, 1, 5);
+
+  C_tang(2, 0) = in_C_tang(cell_lid, iGP, 2, 0);
+  C_tang(2, 1) = in_C_tang(cell_lid, iGP, 2, 1);
+  C_tang(2, 2) = in_C_tang(cell_lid, iGP, 2, 2);
+  C_tang(2, 3) = in_C_tang(cell_lid, iGP, 2, 3);
+  C_tang(2, 4) = in_C_tang(cell_lid, iGP, 2, 4);
+  C_tang(2, 5) = in_C_tang(cell_lid, iGP, 2, 5);
+
+  C_tang(3, 0) = in_C_tang(cell_lid, iGP, 3, 0);
+  C_tang(3, 1) = in_C_tang(cell_lid, iGP, 3, 1);
+  C_tang(3, 2) = in_C_tang(cell_lid, iGP, 3, 2);
+  C_tang(3, 3) = in_C_tang(cell_lid, iGP, 3, 3);
+  C_tang(3, 4) = in_C_tang(cell_lid, iGP, 3, 4);
+  C_tang(3, 5) = in_C_tang(cell_lid, iGP, 3, 5);
+
+  C_tang(4, 0) = in_C_tang(cell_lid, iGP, 4, 0);
+  C_tang(4, 1) = in_C_tang(cell_lid, iGP, 4, 1);
+  C_tang(4, 2) = in_C_tang(cell_lid, iGP, 4, 2);
+  C_tang(4, 3) = in_C_tang(cell_lid, iGP, 4, 3);
+  C_tang(4, 4) = in_C_tang(cell_lid, iGP, 4, 4);
+  C_tang(4, 5) = in_C_tang(cell_lid, iGP, 4, 5);
+
+  C_tang(5, 0) = in_C_tang(cell_lid, iGP, 5, 0);
+  C_tang(5, 1) = in_C_tang(cell_lid, iGP, 5, 1);
+  C_tang(5, 2) = in_C_tang(cell_lid, iGP, 5, 2);
+  C_tang(5, 3) = in_C_tang(cell_lid, iGP, 5, 3);
+  C_tang(5, 4) = in_C_tang(cell_lid, iGP, 5, 4);
+  C_tang(5, 5) = in_C_tang(cell_lid, iGP, 5, 5);
+
 
   return computeElementMatrixTetra4Base(dxu, dyu, dzu, volume, C_tang);
 }
@@ -257,7 +294,7 @@ ARCCORE_HOST_DEVICE RealMatrix<12, 12> computeElementMatrixTetra4Gpu(CellLocalId
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
 
-ARCCORE_HOST_DEVICE RealMatrix<3, 12> computeElementVectorTetra4Gpu(CellLocalId cell_lid, const IndexedCellNodeConnectivityView& cn_cv, const Accelerator::VariableNodeReal3InView& in_node_coord, RealMatrix<6, 6> C_tang, Int32 node_lid)
+ARCCORE_HOST_DEVICE RealMatrix<3, 12> computeElementVectorTetra4Gpu(CellLocalId cell_lid, const IndexedCellNodeConnectivityView& cn_cv, const Accelerator::VariableNodeReal3InView& in_node_coord, const Accelerator::MeshMDVariableInView<Cell, double, ExtentsV<int, -1, -1, -1>>& in_C_tang, Int32 node_lid)
 {
   Real4 dxu = Arcane::FemUtils::Gpu::FeOperation3D::computeGradientXTetra4(cell_lid, cn_cv, in_node_coord);
   Real4 dyu = Arcane::FemUtils::Gpu::FeOperation3D::computeGradientYTetra4(cell_lid, cn_cv, in_node_coord);
@@ -265,17 +302,62 @@ ARCCORE_HOST_DEVICE RealMatrix<3, 12> computeElementVectorTetra4Gpu(CellLocalId 
 
   Real volume = Arcane::FemUtils::Gpu::MeshOperation::computeVolumeTetra4(cell_lid, cn_cv, in_node_coord);
 
+  RealMatrix<6, 6> C_tang;
+  Int8 iGP = 0;
+  // a flattened sequence is faster than a for loop on GPUs
+  C_tang(0, 0) = in_C_tang(cell_lid, iGP, 0, 0);
+  C_tang(0, 1) = in_C_tang(cell_lid, iGP, 0, 1);
+  C_tang(0, 2) = in_C_tang(cell_lid, iGP, 0, 2);
+  C_tang(0, 3) = in_C_tang(cell_lid, iGP, 0, 3);
+  C_tang(0, 4) = in_C_tang(cell_lid, iGP, 0, 4);
+  C_tang(0, 5) = in_C_tang(cell_lid, iGP, 0, 5);
+
+  C_tang(1, 0) = in_C_tang(cell_lid, iGP, 1, 0);
+  C_tang(1, 1) = in_C_tang(cell_lid, iGP, 1, 1);
+  C_tang(1, 2) = in_C_tang(cell_lid, iGP, 1, 2);
+  C_tang(1, 3) = in_C_tang(cell_lid, iGP, 1, 3);
+  C_tang(1, 4) = in_C_tang(cell_lid, iGP, 1, 4);
+  C_tang(1, 5) = in_C_tang(cell_lid, iGP, 1, 5);
+
+  C_tang(2, 0) = in_C_tang(cell_lid, iGP, 2, 0);
+  C_tang(2, 1) = in_C_tang(cell_lid, iGP, 2, 1);
+  C_tang(2, 2) = in_C_tang(cell_lid, iGP, 2, 2);
+  C_tang(2, 3) = in_C_tang(cell_lid, iGP, 2, 3);
+  C_tang(2, 4) = in_C_tang(cell_lid, iGP, 2, 4);
+  C_tang(2, 5) = in_C_tang(cell_lid, iGP, 2, 5);
+
+  C_tang(3, 0) = in_C_tang(cell_lid, iGP, 3, 0);
+  C_tang(3, 1) = in_C_tang(cell_lid, iGP, 3, 1);
+  C_tang(3, 2) = in_C_tang(cell_lid, iGP, 3, 2);
+  C_tang(3, 3) = in_C_tang(cell_lid, iGP, 3, 3);
+  C_tang(3, 4) = in_C_tang(cell_lid, iGP, 3, 4);
+  C_tang(3, 5) = in_C_tang(cell_lid, iGP, 3, 5);
+
+  C_tang(4, 0) = in_C_tang(cell_lid, iGP, 4, 0);
+  C_tang(4, 1) = in_C_tang(cell_lid, iGP, 4, 1);
+  C_tang(4, 2) = in_C_tang(cell_lid, iGP, 4, 2);
+  C_tang(4, 3) = in_C_tang(cell_lid, iGP, 4, 3);
+  C_tang(4, 4) = in_C_tang(cell_lid, iGP, 4, 4);
+  C_tang(4, 5) = in_C_tang(cell_lid, iGP, 4, 5);
+
+  C_tang(5, 0) = in_C_tang(cell_lid, iGP, 5, 0);
+  C_tang(5, 1) = in_C_tang(cell_lid, iGP, 5, 1);
+  C_tang(5, 2) = in_C_tang(cell_lid, iGP, 5, 2);
+  C_tang(5, 3) = in_C_tang(cell_lid, iGP, 5, 3);
+  C_tang(5, 4) = in_C_tang(cell_lid, iGP, 5, 4);
+  C_tang(5, 5) = in_C_tang(cell_lid, iGP, 5, 5);
+
   Int32 idx_x = node_lid * 3;
   Int32 idx_y = idx_x + 1;
   Int32 idx_z = idx_x + 2;
 
-  RealVector<12> epsxx = { dxu[0], 0., 0.,    dxu[1], 0., 0.,    dxu[2], 0., 0.,    dxu[3], 0., 0. };
-  RealVector<12> epsyy = { 0., dyu[0], 0.,    0., dyu[1], 0.,    0., dyu[2], 0.,    0., dyu[3], 0. };
-  RealVector<12> epszz = { 0., 0., dzu[0],    0., 0., dzu[1],    0., 0., dzu[2],    0., 0., dzu[3] };
+  RealVector<12> epsxx = { { dxu[0], 0., 0., dxu[1], 0., 0., dxu[2], 0., 0., dxu[3], 0., 0. } };
+  RealVector<12> epsyy = { { 0., dyu[0], 0., 0., dyu[1], 0., 0., dyu[2], 0., 0., dyu[3], 0. } };
+  RealVector<12> epszz = { { 0., 0., dzu[0], 0., 0., dzu[1], 0., 0., dzu[2], 0., 0., dzu[3] } };
 
-  RealVector<12> epsyz = { 0., dzu[0], dyu[0],    0., dzu[1], dyu[1],    0., dzu[2], dyu[2],    0., dzu[3], dyu[3] };
-  RealVector<12> epszx = { dzu[0], 0., dxu[0],    dzu[1], 0., dxu[1],    dzu[2], 0., dxu[2],    dzu[3], 0., dxu[3] };
-  RealVector<12> epsxy = { dyu[0], dxu[0], 0.,    dyu[1], dxu[1], 0.,    dyu[2], dxu[2], 0.,    dyu[3], dxu[3], 0. };
+  RealVector<12> epsyz = { { 0., dzu[0], dyu[0], 0., dzu[1], dyu[1], 0., dzu[2], dyu[2], 0., dzu[3], dyu[3] } };
+  RealVector<12> epszx = { { dzu[0], 0., dxu[0], dzu[1], 0., dxu[1], dzu[2], 0., dxu[2], dzu[3], 0., dxu[3] } };
+  RealVector<12> epsxy = { { dyu[0], dxu[0], 0., dyu[1], dxu[1], 0., dyu[2], dxu[2], 0., dyu[3], dxu[3], 0. } };
 
   // ∫∫∫ C_tang11 ∂𝑢𝑥/∂𝑥 ∂𝑣𝑥/∂𝑥 + C_tang12 ∂𝑢𝑦/∂𝑦 ∂𝑣𝑥/∂𝑥 + C_tang13 ∂𝑢𝑧/∂𝑧 ∂𝑣𝑥/∂𝑥 + C_tang14 (∂𝑢𝑧/∂𝑦 + ∂𝑢𝑦/∂𝑧) ∂𝑣𝑥/∂𝑥 + C_tang15 (∂𝑢𝑥/∂𝑧 + ∂𝑢𝑧/∂𝑥) ∂𝑣𝑥/∂𝑥 + C_tang16 (∂𝑢𝑦/∂𝑥 + ∂𝑢𝑥/∂𝑦) ∂𝑣𝑥/∂𝑥
   RealVector<12> sigmaXepsxx_x = (C_tang(0, 0) * epsxx(idx_x) + C_tang(0, 1) * epsyy(idx_x) + C_tang(0, 2) * epszz(idx_x) + C_tang(0, 3) * epsyz(idx_x) + C_tang(0, 4) * epszx(idx_x) + C_tang(0, 5) * epsxy(idx_x)) * epsxx;
@@ -307,20 +389,9 @@ ARCCORE_HOST_DEVICE RealMatrix<3, 12> computeElementVectorTetra4Gpu(CellLocalId 
   RealVector<12> sigmaXepsxy_y = (C_tang(0, 5) * epsxx(idx_y) + C_tang(1, 5) * epsyy(idx_y) + C_tang(2, 5) * epszz(idx_y) + C_tang(3, 5) * epsyz(idx_y) + C_tang(4, 5) * epszx(idx_y) + C_tang(5, 5) * epsxy(idx_y)) * epsxy;
   RealVector<12> sigmaXepsxy_z = (C_tang(0, 5) * epsxx(idx_z) + C_tang(1, 5) * epsyy(idx_z) + C_tang(2, 5) * epszz(idx_z) + C_tang(3, 5) * epsyz(idx_z) + C_tang(4, 5) * epszx(idx_z) + C_tang(5, 5) * epsxy(idx_z)) * epsxy;
 
-  RealVector<12> result_x = volume * ( sigmaXepsxx_x + sigmaXepsyy_x + sigmaXepszz_x + sigmaXepsyz_x + sigmaXepszx_x + sigmaXepsxy_x );
-  RealVector<12> result_y = volume * ( sigmaXepsxx_y + sigmaXepsyy_y + sigmaXepszz_y + sigmaXepsyz_y + sigmaXepszx_y + sigmaXepsxy_y );
-  RealVector<12> result_z = volume * ( sigmaXepsxx_z + sigmaXepsyy_z + sigmaXepszz_z + sigmaXepsyz_z + sigmaXepszx_z + sigmaXepsxy_z );
+  RealVector<12> result_x = volume * (sigmaXepsxx_x + sigmaXepsyy_x + sigmaXepszz_x + sigmaXepsyz_x + sigmaXepszx_x + sigmaXepsxy_x);
+  RealVector<12> result_y = volume * (sigmaXepsxx_y + sigmaXepsyy_y + sigmaXepszz_y + sigmaXepsyz_y + sigmaXepszx_y + sigmaXepsxy_y);
+  RealVector<12> result_z = volume * (sigmaXepsxx_z + sigmaXepsyy_z + sigmaXepszz_z + sigmaXepsyz_z + sigmaXepszx_z + sigmaXepsxy_z);
 
-  RealMatrix<3, 12> result = {
-    { result_x(0), result_x(1), result_x(2), result_x(3), result_x(4), result_x(5),
-      result_x(6), result_x(7), result_x(8), result_x(9), result_x(10), result_x(11) },
-
-    { result_y(0), result_y(1), result_y(2), result_y(3), result_y(4), result_y(5),
-      result_y(6), result_y(7), result_y(8), result_y(9), result_y(10), result_y(11) },
-
-    { result_z(0), result_z(1), result_z(2), result_z(3), result_z(4), result_z(5),
-      result_z(6), result_z(7), result_z(8), result_z(9), result_z(10), result_z(11) }
-  };
-
-  return result;
+  return RealMatrix<3, 12>(result_x, result_y, result_z);
 }

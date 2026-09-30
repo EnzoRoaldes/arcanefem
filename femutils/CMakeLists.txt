@@ -1,5 +1,62 @@
-option(ENABLE_DEBUG_MATRIX "Enable Debug matrix instead of a sparse one" OFF)
+﻿option(ENABLE_DEBUG_MATRIX "Enable Debug matrix instead of a sparse one" OFF)
 option(FEMUTILS_ENABLE_CODE_COVERAGE "Whether we use compiler option for code coverage" OFF)
+
+set(SOURCES
+  FemUtils.h
+  FemUtils.cc
+  FemUtilsGlobal.h
+  BoundaryConditions.cc
+  BoundaryConditionsHelpers.cc
+  BoundaryConditions2D.cc
+  BoundaryConditions3D.cc
+  ShapeFunctions.h
+  DoFLinearSystem.h
+  DoFLinearSystem.cc
+  CooFormatMatrix.h
+  CsrFormatMatrix.h
+  CsrFormatMatrixView.h
+  CsrFormatMatrixView.cc
+  BSRFormat.h
+  DoFLinearSystemImplBase.cc
+  DoKDoFLinearSystemImpl.cc
+  FemDoFsOnNodes.h
+  FemDoFsOnNodes.cc
+  FemDoFsOnCells.h
+  FemDoFsOnCells.cc
+  FemBoundaryConditions.cc
+  ArcaneFemFunctionsGpu.h
+  ArcaneFemFunctions.h
+  ArcaneFemFunctions.cc
+  FemOperation.h
+  FemOperation.cc
+  FemGaussQuadrature.h
+  FemGaussQuadrature.cc
+  FemShapeMethods.h
+  FemShapeMethods.cc
+  MeshOperation.h
+  MeshOperation.cc
+  AlephDoFLinearSystem.cc
+  GaussQuadrature.h
+  GaussDoFsOnCells.h
+  GaussDoFsOnCells.cc
+  Integer3std.h
+  IDoFLinearSystemFactory.h
+  IArcaneFemBC.h
+  AlephDoFLinearSystemFactory_axl.h
+  SequentialBasicDoFLinearSystemFactory_axl.h
+  HypreDoFLinearSystemFactory_axl.h
+  PetscDoFLinearSystemFactory_axl.h
+  AlienDoFLinearSystemFactory_axl.h
+  AlinaDoFLinearSystemFactory_axl.h
+  FemBoundaryConditions_axl.h
+  MeshTensorVariable.h
+  MeshTensorVariable.H
+  internal/IDoFLinearSystemImpl.h
+  internal/OrderedRowColumnMap.h
+  internal/CsrDoFLinearSystemImpl.h
+  internal/DoKDoFLinearSystemImpl.h
+  internal/DoFLinearSystemImplBase.h
+)
 
 set(ACCELERATOR_SOURCES
   ArcaneFemFunctionsGpu.cc
@@ -16,57 +73,38 @@ if (TARGET Arcane::arcane_aleph_petsc)
   list(APPEND ACCELERATOR_SOURCES PetscDoFLinearSystem.cc)
 endif()
 
-find_package(Alien)
-if (Alien_FOUND)
-  list(APPEND ACCELERATOR_SOURCES AlienDoFLinearSystem.cc)
+if (TARGET Arccore::arccore_alina)
+  list(APPEND SOURCES AlinaDoFLinearSystem.cc)
+endif()
+
+# Check if Alien is available
+set(FEMUTILS_HAS_SOLVER_BACKEND_ALIEN FALSE)
+if (ARCANEFEM_ENABLE_ALIEN)
+  message(STATUS "Alien is enabled. Trying to find it")
+  find_package(Alien)
+  find_package(Boost)
+  find_package(AlienPlugins)
+  if (Alien_FOUND AND Boost_FOUND AND AlienPlugins_FOUND)
+    list(APPEND ACCELERATOR_SOURCES AlienDoFLinearSystem.cc)
+  else()
+    message(FATAL_ERROR "Alien backend is requested but Alien is not found"
+      "(Alien_FOUND=${Alien_FOUND}, Boost_FOUND=${Boost_FOUND}, AlienPlugins_FOUND=${AlienPlugins_FOUND})"
+      "Install a version of Alien or disable it using -DARCANEFEM_ENABLE_ALIEN"
+      )
+  endif()
+  message(STATUS "Alien backend is available")
+  set(FEMUTILS_HAS_SOLVER_BACKEND_ALIEN TRUE)
 endif()
 
 add_library(FemUtils
-  FemUtils.h
-  FemUtils.cc
-  FemUtilsGlobal.h
-  ShapeFunctions.h
-  DoFLinearSystem.h
-  DoFLinearSystem.cc
-  CooFormatMatrix.h
-  CsrFormatMatrix.h
-  CsrFormatMatrixView.h
-  CsrFormatMatrixView.cc
-  BSRFormat.h
-  DoFLinearSystemImplBase.cc
-  FemDoFsOnNodes.h
-  FemDoFsOnNodes.cc
-  FemDoFsOnCells.h
-  FemDoFsOnCells.cc
-  FemBoundaryConditions.cc
-  ArcaneFemFunctionsGpu.h
-  ArcaneFemFunctions.h
-  ArcaneFemFunctions.cc
-  AlephDoFLinearSystem.cc
-  GaussQuadrature.h
-  GaussDoFsOnCells.h
-  GaussDoFsOnCells.cc
-  Integer3std.h
-  IDoFLinearSystemFactory.h
-  IArcaneFemBC.h
-  AlephDoFLinearSystemFactory_axl.h
-  SequentialBasicDoFLinearSystemFactory_axl.h
-  HypreDoFLinearSystemFactory_axl.h
-  PetscDoFLinearSystemFactory_axl.h
-  AlienDoFLinearSystemFactory_axl.h
-  FemBoundaryConditions_axl.h
-  MeshTensorVariable.h
-  MeshTensorVariable.H
-  internal/IDoFLinearSystemImpl.h
-  internal/OrderedRowColumnMap.h
-  internal/CsrDoFLinearSystemImpl.h
-  internal/DoFLinearSystemImplBase.h
+  ${SOURCES}
   ${ACCELERATOR_SOURCES}
 )
 
 arcane_accelerator_add_source_files(${ACCELERATOR_SOURCES})
 arcane_accelerator_add_to_target(FemUtils)
 
+arcane_generate_axl(AlinaDoFLinearSystemFactory)
 arcane_generate_axl(AlephDoFLinearSystemFactory)
 arcane_generate_axl(SequentialBasicDoFLinearSystemFactory)
 arcane_generate_axl(HypreDoFLinearSystemFactory)
@@ -89,17 +127,13 @@ set(FEMUTILS_HAS_PARALLEL_SOLVER_HYPRE FALSE)
 set(FEMUTILS_HAS_PARALLEL_SOLVER_PETSC FALSE)
 set(FEMUTILS_HAS_PARALLEL_SOLVER_ALIEN FALSE)
 
-if (Alien_FOUND)
-  find_package(Boost REQUIRED)
-  find_package(AlienPlugins REQUIRED)
+if (ARCANEFEM_ENABLE_ALIEN)
   target_link_libraries(FemUtils PRIVATE
     Alien::alien_core
     Alien::alien_semantic_ref
     alien_arcane_tools
     arcane_full
   )
-  message(STATUS "Alien backend is available")
-  set(FEMUTILS_HAS_SOLVER_BACKEND_ALIEN TRUE)
 endif()
 
 if (TARGET Arcane::arcane_aleph_trilinos)
@@ -146,6 +180,12 @@ if (TARGET Arcane::arcane_aleph_hypre)
   endif()
 endif()
 
+set(FEMUTILS_HAS_SOLVER_BACKEND_ALINA FALSE)
+if (TARGET Arccore::arccore_alina)
+  message(STATUS "Alina backend is available")
+  set(FEMUTILS_HAS_SOLVER_BACKEND_ALINA TRUE)
+  target_link_libraries(FemUtils PRIVATE Arccore::arccore_alina)
+endif()
 
 if(NOT FEMUTILS_HAS_PARALLEL_SOLVER)
   message(STATUS "WARNING: No Arcane parallel solver is available. Parallel linear solver system is disabled")
@@ -167,3 +207,11 @@ set(FEMUTILS_HAS_SOLVER_BACKEND_TRILINOS ${FEMUTILS_HAS_SOLVER_BACKEND_TRILINOS}
 set(FEMUTILS_HAS_SOLVER_BACKEND_PETSC ${FEMUTILS_HAS_SOLVER_BACKEND_PETSC} CACHE BOOL "Is Petsc solver available" FORCE)
 set(FEMUTILS_HAS_SOLVER_BACKEND_HYPRE ${FEMUTILS_HAS_SOLVER_BACKEND_HYPRE} CACHE BOOL "Is Hypre solver available" FORCE)
 set(FEMUTILS_HAS_SOLVER_BACKEND_ALIEN ${FEMUTILS_HAS_SOLVER_BACKEND_ALIEN} CACHE BOOL "Is Alien solver available" FORCE)
+set(FEMUTILS_HAS_SOLVER_BACKEND_ALINA ${FEMUTILS_HAS_SOLVER_BACKEND_ALINA} CACHE BOOL "Is Alina solver available" FORCE)
+
+# ----------------------------------------------------------------------------
+# Local Variables:
+# tab-width: 2
+# indent-tabs-mode: nil
+# coding: utf-8-with-signature
+# End:

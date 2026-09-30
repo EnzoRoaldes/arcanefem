@@ -39,6 +39,7 @@
 
 #include "IDoFLinearSystemFactory.h"
 #include "internal/CsrDoFLinearSystemImpl.h"
+#include "internal/DoKDoFLinearSystemImpl.h"
 
 namespace Arcane::FemUtils
 {
@@ -115,22 +116,20 @@ namespace
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
 
-/*---------------------------------------------------------------------------*/
-/*---------------------------------------------------------------------------*/
-
-class HypreDoFLinearSystemImpl
-: public CsrDoFLinearSystemImpl
+class HypreSolver
+: public TraceAccessor
 {
  public:
 
-  HypreDoFLinearSystemImpl(IItemFamily* dof_family, const String& solver_name)
-  : CsrDoFLinearSystemImpl(dof_family, solver_name)
+  HypreSolver(IItemFamily* dof_family, const String& solver_name)
+  : TraceAccessor(dof_family->traceMng())
+  , m_dof_family(dof_family)
   , m_dof_matrix_numbering(VariableBuildInfo(dof_family, solver_name + "MatrixNumbering"))
   {
     info() << "[Hypre-Info] Creating HypreDoFLinearSystemImpl()";
   }
 
-  ~HypreDoFLinearSystemImpl() override
+  ~HypreSolver()
   {
     info() << "[Hypre-Info] Calling HYPRE_Finalize";
 #if HYPRE_RELEASE_NUMBER >= 21500
@@ -149,9 +148,12 @@ class HypreDoFLinearSystemImpl
 
  public:
 
-  void solve() override;
+  void solve(Runner runner, CSRFormatView matrix_view,
+             VariableDoFReal& solution_variable, VariableDoFReal& rhs_variable,
+             bool has_near_null_space, MDSpan<const Real, MDDim2> near_null_space_values,
+             Int32 near_null_space_block_size);
 
-  void setSolverCommandLineArguments(const CommandLineArguments& args) override
+  void setSolverCommandLineArguments(const CommandLineArguments& args)
   {
   }
 
@@ -171,6 +173,7 @@ class HypreDoFLinearSystemImpl
 
  private:
 
+  IItemFamily* m_dof_family = nullptr;
   VariableDoFInt32 m_dof_matrix_numbering;
 
   NumArray<Int32, MDDim1> m_parallel_columns_index;
@@ -206,10 +209,10 @@ class HypreDoFLinearSystemImpl
  *
  * Each rank owns consecutive rows of the matrix in increasing order.
  */
-void HypreDoFLinearSystemImpl::
+void HypreSolver::
 _computeMatrixNumeration()
 {
-  IItemFamily* dof_family = dofFamily();
+  IItemFamily* dof_family = m_dof_family;
   IParallelMng* pm = dof_family->parallelMng();
   const bool is_parallel = pm->isParallel();
   const Int32 nb_rank = pm->commSize();
@@ -262,10 +265,16 @@ namespace
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
 
-void HypreDoFLinearSystemImpl::
-solve()
+void HypreSolver::
+solve(Runner runner, CSRFormatView matrix_view,
+      VariableDoFReal& solution_variable, VariableDoFReal& rhs_variable,
+      bool has_near_null_space, MDSpan<const Real, MDDim2> near_null_space_values,
+      Int32 near_null_space_block_size)
 {
   const bool do_debug_print = false;
+
+  if (has_near_null_space && m_preconditioner != preconditioner::AMG)
+    ARCANE_THROW(NotSupportedException, "Hypre near-null-space vectors require the BoomerAMG preconditioner");
 
 #if HYPRE_RELEASE_NUMBER >= 22700
   HYPRE_MemoryLocation hypre_memory = HYPRE_MEMORY_HOST;
@@ -273,7 +282,7 @@ solve()
 #endif
 
   // Récupère le communicateur MPI associé
-  IItemFamily* dof_family = dofFamily();
+  IItemFamily* dof_family = m_dof_family;
   IParallelMng* pm = dof_family->parallelMng();
   ITimeStats* tstat = pm->timeStats();
   Parallel::Communicator arcane_comm = pm->communicator();
@@ -289,7 +298,6 @@ solve()
   _computeMatrixNumeration();
 
   bool is_use_device = false;
-  Runner runner = this->runner();
   if (runner.isInitialized()) {
     is_use_device = isAcceleratorPolicy(runner.executionPolicy());
     info() << "[Hypre-Info] Runner for Hypre=" << runner.executionPolicy() << " wanted_is_device=" << is_use_device;
@@ -306,6 +314,10 @@ solve()
     is_use_device = false;
   }
 #endif
+
+  // Near-null-space vectors are currently supported on the CPU only (TODO: implement on GPU)
+  if (is_use_device && has_near_null_space)
+    ARCANE_THROW(NotSupportedException, "Hypre near-null-space vectors are currently supported on the CPU only");
 
 #if HYPRE_RELEASE_NUMBER >= 22700
   if (is_use_device) {
@@ -352,7 +364,7 @@ solve()
   Span<const Int32> rows_index_span = m_dof_matrix_numbering.asArray();
   const Int32 nb_local_row = rows_index_span.size();
 
-  CSRFormatView csr_view = this->getCSRValues();
+  CSRFormatView csr_view = matrix_view;
   const Int32 nb_row = csr_view.nbRow();
   if (do_debug_print) {
     info() << "ROWS_INDEX=" << rows_index_span;
@@ -364,13 +376,11 @@ solve()
   const int last_row = m_first_own_row + m_nb_own_row - 1;
 
   info() << "[Hypre-Info] CreateMatrix first_row=" << first_row << " last_row " << last_row;
-  hypreCheck("IJMatrixCreate",HYPRE_IJMatrixCreate(mpi_comm, first_row, last_row, first_row, last_row, &ij_A));
+  hypreCheck("IJMatrixCreate", HYPRE_IJMatrixCreate(mpi_comm, first_row, last_row, first_row, last_row, &ij_A));
 
   if (do_debug_print) {
-    VariableDoFReal& rhs_values(rhsVariable());
-    IItemFamily* dof_family = dofFamily();
     ENUMERATE_ (DoF, idof, dof_family->allItems().own()) {
-      Real v = rhs_values[idof];
+      Real v = rhs_variable[idof];
       info() << "SET VECTOR VALUE (" << std::setw(4) << idof.itemLocalId() << ") = " << v;
     }
   }
@@ -378,11 +388,11 @@ solve()
   //int* rows_nb_column_data = const_cast<int*>(csr_view.rowsNbColumn().data());
 
   Real m1 = platform::getRealTime();
-  hypreCheck("IJMatrixSetObjectType",HYPRE_IJMatrixSetObjectType(ij_A, HYPRE_PARCSR));
+  hypreCheck("IJMatrixSetObjectType", HYPRE_IJMatrixSetObjectType(ij_A, HYPRE_PARCSR));
 #if HYPRE_RELEASE_NUMBER >= 22700
-  hypreCheck("IJMatrixInitialize_v2",HYPRE_IJMatrixInitialize_v2(ij_A, hypre_memory));
+  hypreCheck("IJMatrixInitialize_v2", HYPRE_IJMatrixInitialize_v2(ij_A, hypre_memory));
 #else
-  hypreCheck("IJMatrixInitialize",HYPRE_IJMatrixInitialize(ij_A));
+  hypreCheck("IJMatrixInitialize", HYPRE_IJMatrixInitialize(ij_A));
 #endif
   // m_csr_view.columns() use matrix coordinates local to sub-domain
   // We need to translate them to global matrix coordinates
@@ -423,7 +433,7 @@ solve()
         Int32 col_index = csr_view.columns()[row_csr_index + i];
         Real v = matrix_values[row_csr_index + i];
         if (v != 0.0) {
-          if (col_index >= 0){
+          if (col_index >= 0) {
             info() << "SET MATRIX VALUE (" << std::setw(4) << dof.localId()
                    << "," << std::setw(4) << col_index << ")"
                    << " v=" << std::setw(25) << v;
@@ -470,8 +480,7 @@ solve()
 
   RunQueue q = makeQueue(runner);
 
-  VariableDoFReal& rhs_variable = this->rhsVariable();
-  VariableDoFReal& dof_variable = this->solutionVariable();
+  VariableDoFReal& dof_variable = solution_variable;
 
   if (is_use_device) {
     info() << "[Hypre-Info] Prefetching memory";
@@ -482,7 +491,7 @@ solve()
     VariableUtils::prefetchVariableAsync(rhs_variable, &q);
     VariableUtils::prefetchVariableAsync(dof_variable, &q);
   }
-  //Span<const Int32> rows_nb_column_span = csr_view.rowsNbColumn();
+  //  Span<const Int32> rows_nb_column_span = csr_view.rowsNbColumn();
   if (is_use_device && is_use_device_memory) {
     _doCopy(na_rows_index, rows_index_span, &q);
     _doCopy(na_columns_index, columns_index_span, &q);
@@ -498,8 +507,10 @@ solve()
   {
     auto command = makeCommand(q);
     auto rows_nb_column_data = viewOut(command, na_rows_nb_column_data);
-    command << RUNCOMMAND_LOOP1(i, nb_row)
+    //    command << RUNCOMMAND_LOOP1(i, nb_row)
+    command << RUNCOMMAND_LOOP1(iter, nb_row)
     {
+      auto [i] = iter(); // TODO: not needed in new Arcane versions
       rows_nb_column_data[i] = csr_view.nbColumnForRow(i);
     };
   }
@@ -532,6 +543,8 @@ solve()
   HYPRE_ParVector parvector_b = nullptr;
   HYPRE_IJVector ij_vector_x = nullptr;
   HYPRE_ParVector parvector_x = nullptr;
+  UniqueArray<HYPRE_IJVector> ij_near_null_vectors;
+  UniqueArray<HYPRE_ParVector> par_near_null_vectors;
 
   hypreCheck("IJVectorCreate", HYPRE_IJVectorCreate(mpi_comm, first_row, last_row, &ij_vector_b));
   hypreCheck("IJVectorSetObjectType", HYPRE_IJVectorSetObjectType(ij_vector_b, HYPRE_PARCSR));
@@ -575,6 +588,57 @@ solve()
   hypreCheck("HYPRE_IJVectorAssemble",
              HYPRE_IJVectorAssemble(ij_vector_x));
   HYPRE_IJVectorGetObject(ij_vector_x, (void**)&parvector_x);
+
+  if (has_near_null_space) {
+    const auto& modes = near_null_space_values;
+    const Int32 nb_mode = modes.extent0();
+    ij_near_null_vectors.resize(nb_mode);
+    par_near_null_vectors.resize(nb_mode);
+
+    UniqueArray<Int32> mode_indices(m_nb_own_row);
+    UniqueArray<Real> mode_values(m_nb_own_row);
+    for (Int32 mode_index = 0; mode_index < nb_mode; ++mode_index) {
+      Int32 index = 0;
+      ENUMERATE_DOF (idof, dof_family->allItems().own()) {
+        mode_indices[index] = m_dof_matrix_numbering[idof];
+        mode_values[index] = modes(mode_index, idof.itemLocalId());
+        ++index;
+      }
+
+      hypreCheck("IJVectorCreate",
+                 HYPRE_IJVectorCreate(mpi_comm, first_row, last_row,
+                                      &ij_near_null_vectors[mode_index]));
+      hypreCheck("IJVectorSetObjectType",
+                 HYPRE_IJVectorSetObjectType(ij_near_null_vectors[mode_index], HYPRE_PARCSR));
+#if HYPRE_RELEASE_NUMBER >= 22700
+      hypreCheck("IJVectorInitialize_v2",
+                 HYPRE_IJVectorInitialize_v2(ij_near_null_vectors[mode_index], hypre_memory));
+#else
+      hypreCheck("IJVectorInitialize",
+                 HYPRE_IJVectorInitialize(ij_near_null_vectors[mode_index]));
+#endif
+
+      const Int32* mode_indices_data = mode_indices.data();
+      const Real* mode_values_data = mode_values.data();
+      NumArray<Int32, MDDim1> device_mode_indices(mem_ressource);
+      NumArray<Real, MDDim1> device_mode_values(mem_ressource);
+      if (is_use_device && is_use_device_memory) {
+        _doCopy(device_mode_indices, Span<const Int32>(mode_indices), &q);
+        _doCopy(device_mode_values, Span<const Real>(mode_values), &q);
+        q.barrier();
+        mode_indices_data = device_mode_indices.to1DSpan().data();
+        mode_values_data = device_mode_values.to1DSpan().data();
+      }
+      hypreCheck("HYPRE_IJVectorSetValues",
+                 HYPRE_IJVectorSetValues(ij_near_null_vectors[mode_index], m_nb_own_row,
+                                         mode_indices_data, mode_values_data));
+      hypreCheck("HYPRE_IJVectorAssemble",
+                 HYPRE_IJVectorAssemble(ij_near_null_vectors[mode_index]));
+      hypreCheck("HYPRE_IJVectorGetObject",
+                 HYPRE_IJVectorGetObject(ij_near_null_vectors[mode_index],
+                                         (void**)&par_near_null_vectors[mode_index]));
+    }
+  }
   Real v2 = platform::getRealTime();
   info() << "[Hypre-Timer] Time to create vectors = " << (v2 - v1);
   pm->traceMng()->flush();
@@ -652,6 +716,20 @@ solve()
       HYPRE_BoomerAMGSetStrongThreshold(precond, m_amg_threshold); // amg threshold strength //
       HYPRE_BoomerAMGSetKeepTranspose(precond, 1); // for GPU the local interp. trnsp saved//
       HYPRE_BoomerAMGSetRAP2(precond, 0); // RAP in two multiplications //
+
+      if (has_near_null_space) {
+        hypreCheck("HYPRE_BoomerAMGSetNumFunctions",
+                   HYPRE_BoomerAMGSetNumFunctions(precond, near_null_space_block_size));
+        hypreCheck("HYPRE_BoomerAMGSetNodal",
+                   HYPRE_BoomerAMGSetNodal(precond, 1));
+        hypreCheck("HYPRE_BoomerAMGSetInterpVectors",
+                   HYPRE_BoomerAMGSetInterpVectors(precond, par_near_null_vectors.size(),
+                                                   par_near_null_vectors.data()));
+        hypreCheck("HYPRE_BoomerAMGSetInterpVecVariant",
+                   HYPRE_BoomerAMGSetInterpVecVariant(precond, 2));
+        info() << "[Hypre-Info] Attached " << par_near_null_vectors.size()
+               << " near-null-space vectors";
+      }
 
       switch (m_solver) {
       case solver::CG:
@@ -818,7 +896,7 @@ solve()
   }
 
   // Free matrix and vectors
-  hypreCheck("IJMatrixDestroy",HYPRE_IJMatrixDestroy(ij_A));
+  hypreCheck("IJMatrixDestroy", HYPRE_IJMatrixDestroy(ij_A));
   hypreCheck("IJVectorDestroy", HYPRE_IJVectorDestroy(ij_vector_b));
   hypreCheck("IJVectorDestroy", HYPRE_IJVectorDestroy(ij_vector_x));
   {
@@ -855,7 +933,105 @@ solve()
       break;
     }
   }
+  for (HYPRE_IJVector vector : ij_near_null_vectors)
+    hypreCheck("IJVectorDestroy", HYPRE_IJVectorDestroy(vector));
 }
+
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+
+class HypreDoFLinearSystemImpl
+: public CsrDoFLinearSystemImpl
+{
+ public:
+
+  HypreDoFLinearSystemImpl(IItemFamily* dof_family, const String& solver_name)
+  : CsrDoFLinearSystemImpl(dof_family, solver_name)
+  {
+    m_hypre_solver = new HypreSolver(dof_family, solver_name);
+  }
+
+  ~HypreDoFLinearSystemImpl() override
+  {
+    delete m_hypre_solver;
+  }
+
+ public:
+
+  void build() {}
+
+ public:
+
+  void solve() override
+  {
+    m_hypre_solver->solve(runner(), this->getCSRValues(), solutionVariable(), rhsVariable(),
+                          hasNearNullSpace(), nearNullSpaceValues(), nearNullSpaceBlockSize());
+  }
+
+  void setSolverCommandLineArguments(const CommandLineArguments& args) override
+  {
+    m_hypre_solver->setSolverCommandLineArguments(args);
+  }
+
+  HypreSolver* underlyingHypreSolver() const { return m_hypre_solver; }
+
+ private:
+
+  HypreSolver* m_hypre_solver = nullptr;
+};
+
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+
+class HypreDoKDoFLinearSystemImpl
+: public DoKDoFLinearSystemImpl
+{
+ public:
+
+  HypreDoKDoFLinearSystemImpl(IItemFamily* dof_family, const String& solver_name)
+  : DoKDoFLinearSystemImpl(dof_family, solver_name)
+  {
+    m_hypre_solver = new HypreSolver(dof_family, solver_name);
+  }
+
+  ~HypreDoKDoFLinearSystemImpl() override
+  {
+    delete m_hypre_solver;
+  }
+
+ public:
+
+  void build() {}
+
+ public:
+
+  void solve() override
+  {
+    convertToCSRMatrix();
+    CsrFormatMatrixView csr_view = getCsrFormatMatrixView();
+    m_hypre_solver->solve(runner(), csr_view, solutionVariable(), rhsVariable(),
+                          hasNearNullSpace(), nearNullSpaceValues(), nearNullSpaceBlockSize());
+  }
+
+  void setSolverCommandLineArguments(const CommandLineArguments& args) override
+  {
+    m_hypre_solver->setSolverCommandLineArguments(args);
+  }
+
+  void applyMatrixTransformation() override
+  {
+    fillRowColumnEliminationInfos();
+  }
+
+  HypreSolver* underlyingHypreSolver() const { return m_hypre_solver; }
+
+ private:
+
+  HypreSolver* m_hypre_solver = nullptr;
+};
 
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
@@ -871,11 +1047,51 @@ class HypreDoFLinearSystemFactoryService
     info() << "[Hypre-Info] Create HypreDoF";
   }
 
+  bool amgNearNullSpace() override
+  {
+    return options()->amgNearNullSpace();
+  }
+
   IDoFLinearSystemImpl*
   createInstance(ISubDomain* sd, IItemFamily* dof_family, const String& solver_name) override
   {
-    auto* x = new HypreDoFLinearSystemImpl(dof_family, solver_name);
+    return _createInstance(sd, dof_family, solver_name, eLinearSystemMatrixFormat::Csr);
+  }
 
+  IDoFLinearSystemImpl*
+  createInstance(ISubDomain* sd, IItemFamily* dof_family, const String& solver_name,
+                 eLinearSystemMatrixFormat matrix_format) override
+  {
+    return _createInstance(sd, dof_family, solver_name, matrix_format);
+  }
+
+ private:
+
+  IDoFLinearSystemImpl*
+  _createInstance(ISubDomain* sd, IItemFamily* dof_family,
+                  const String& solver_name, eLinearSystemMatrixFormat matrix_format)
+  {
+    HypreSolver* x = nullptr;
+    IDoFLinearSystemImpl* linear_system = nullptr;
+    if (matrix_format == eLinearSystemMatrixFormat::DoK) {
+      info() << "Using DoK format Hypre linear system";
+      auto* v = new HypreDoKDoFLinearSystemImpl(dof_family, solver_name);
+      linear_system = v;
+      x = v->underlyingHypreSolver();
+    }
+    else if (matrix_format == eLinearSystemMatrixFormat::Csr) {
+      auto* v = new HypreDoFLinearSystemImpl(dof_family, solver_name);
+      linear_system = v;
+      x = v->underlyingHypreSolver();
+    }
+    else
+      ARCANE_FATAL("Unsupported matrix_format '{0}'", static_cast<int>(matrix_format));
+    _initializeHypreSolver(x);
+    return linear_system;
+  }
+
+  void _initializeHypreSolver(HypreSolver* x)
+  {
     x->build();
     x->setRelTolerance(options()->rtol());
     x->setAbsTolerance(options()->atol());
@@ -888,7 +1104,6 @@ class HypreDoFLinearSystemFactoryService
     x->setVerbosityLevel(options()->verbosity());
     x->setSolver(options()->solver());
     x->setPreconditioner(options()->preconditioner());
-    return x;
   }
 };
 

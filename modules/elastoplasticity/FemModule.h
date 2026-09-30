@@ -18,6 +18,7 @@
 #include <arcane/utils/CommandLineArguments.h>
 #include <arcane/utils/ParameterList.h>
 #include <arcane/utils/ApplicationInfo.h>
+#include <arcane/utils/NumArray.h>
 
 #include <arcane/ITimeLoopMng.h>
 #include <arcane/IMesh.h>
@@ -80,14 +81,19 @@ class FemModuleElastoplasticity
   VersionInfo versionInfo() const override { return VersionInfo(1, 0, 0); }
 
   void _doStationarySolve();
-  void _assembleBilinearOperator();
+  void _assembleBilinearOperatorGlobal();
+  void _assembleBilinearOperatorLocalVonMises(bool elastic_assembly = false);
+  void _assembleBilinearOperatorLocalDruckerPrager(bool elastic_assembly = false);
   void _assembleDirichletsNewtonGpu();
   void _assembleZeroRHSOnConstrainedDOFsGpu();
 
   inline void _applyInternalBodyForceTria3Gpu(VariableDoFReal& rhs_values, const FemDoFsOnNodes& dofs_on_nodes, const VariableNodeReal3& node_coord, IMesh* mesh, RunQueue* queue);
 
-  inline void _updateGlobalTangentMaterialTensorVonMisesTria3Gpu();
-  inline void _updateGlobalTangentMaterialTensorDruckerPragerTria3Gpu();
+  inline void _integrateAndSaveConstitutiveLawVonMisesTria3Gpu();
+  inline void _updateStressAndInVarsVonMisesTria3Gpu();
+  inline void _integrateAndSaveConstitutiveLawDruckerPragerTria3Gpu();
+  inline void _updateStressAndInVarsDruckerPragerTria3Gpu();
+
 
  private:
 
@@ -127,12 +133,11 @@ class FemModuleElastoplasticity
   Real3 f;
 
   RealMatrix<3, 3> m_C_elas_2d;
-  RealMatrix<3, 3> m_C_tang_2d;
   RealMatrix<6, 6> m_C_elas_3d;
-  RealMatrix<6, 6> m_C_tang_3d;
 
   Int8 m_dof_per_node;
   Int8 m_nGP = 1;
+  Int8 m_nodes_per_cell = 0;
   Int32 m_newton_iter;
   Int32 m_newton_max_iters;
 
@@ -144,18 +149,21 @@ class FemModuleElastoplasticity
 
   bool m_use_gpu_functions = true;
   bool m_assemble_linear_system = true;
-  bool m_assemble_nonlinear_system = true;
   bool m_solve_linear_system = true;
   bool m_solve_nonlinear_system = true;
   bool m_cross_validation = false;
+  bool m_use_rigid_body_near_null_space = false;
   bool m_hex_quad_mesh = false;
 
   bool m_material_initialized = false;
   bool m_newton_solver_converged = false;
   bool m_check_with_bilinear_operator = false;
 
+  NumArray<Real, MDDim2> m_near_null_space_vectors;
+
   void _updateTime();
   void _getMaterialParameters();
+  void _setGlobalElasticMaterialTensorAtGPs();
   void _solveNewton();
   void _checkNewtonConvergence();
   void _incrementVariables();
@@ -167,30 +175,44 @@ class FemModuleElastoplasticity
   void _updateTimeVariables();
   void _initBsr();
   void _initConstitutiveLaw();
+  void _buildRigidBodyNearNullSpace();
 
   // Von Mises Law
   inline void _restoreConvergedStateVonMises();
   inline void _commitInternalVariablesVonMises();
-  inline void _updateGlobalTangentMaterialTensorVonMises();
-  inline void _updateGlobalTangentMaterialTensorVonMisesTria3Cpu();
-
-  inline void _applyInternalBodyForceVonMises(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
-  inline void _applyInternalBodyForceVonMisesTria3Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _integrateAndSaveConstitutiveLawVonMises();
+  inline void _integrateAndSaveConstitutiveLawVonMisesTria3Cpu();
+  inline void _integrateAndSaveConstitutiveLawVonMisesQuad4Cpu();
+  inline void _integrateAndSaveConstitutiveLawVonMisesQuad8Cpu();
+  inline void _integrateAndSaveConstitutiveLawVonMisesQuad9Cpu();
+  inline void _updateStressAndInVarsVonMises();
+  inline void _updateStressAndInVarsVonMisesQuad4Cpu();
+  inline void _updateStressAndInVarsVonMisesQuad8Cpu();
+  inline void _updateStressAndInVarsVonMisesQuad9Cpu();
 
   // Drucker Prager Law
   inline void _restoreConvergedStateDruckerPrager();
   inline void _commitInternalVariablesDruckerPrager();
-  inline void _updateGlobalTangentMaterialTensorDruckerPrager();
-  inline void _updateGlobalTangentMaterialTensorDruckerPragerTria3Cpu();
+  inline void _integrateAndSaveConstitutiveLawDruckerPrager();
+  inline void _integrateAndSaveConstitutiveLawDruckerPragerTria3Cpu();
+  inline void _updateStressAndInVarsDruckerPrager();
 
   // RHS assembly helper functions
   inline void _applyInternalBodyForce(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
   inline void _applyInternalBodyForceTria3Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _applyInternalBodyForceQuad4Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _applyInternalBodyForceQuad8Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _applyInternalBodyForceQuad9Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
 
   inline void _applyExternalBodyForce(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _applyExternalBodyForceQuad4Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _applyExternalBodyForceQuad8Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
+  inline void _applyExternalBodyForceQuad9Cpu(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
 
   inline void _applyTraction(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
   static inline void _applyPressureTableToRhsTria3(BC::ITractionBoundaryCondition* bs, const Real t, Int32 boundary_condition_index, const UniqueArray<Arcane::FemUtils::CaseTableInfo>& traction_case_table_list, const IndexedNodeDoFConnectivityView& node_dof, const VariableNodeReal3& node_coord, VariableDoFReal& rhs_values);
+  static inline void _applyPressureTableToRhsLine3(BC::ITractionBoundaryCondition* bs, const Real t, Int32 boundary_condition_index, const UniqueArray<Arcane::FemUtils::CaseTableInfo>& traction_case_table_list, const IndexedNodeDoFConnectivityView& node_dof, const VariableNodeReal3& node_coord, VariableDoFReal& rhs_values);
+  static inline void _applyTractionToRhsLine3(BC::ITractionBoundaryCondition* bs, const IndexedNodeDoFConnectivityView& node_dof, const VariableNodeReal3& node_coord, VariableDoFReal& rhs_values);
 
   inline void _applyDirichletNewton(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
   inline void _applyZeroRHSOnConstrainedDOFs(VariableDoFReal& rhs_values, const IndexedNodeDoFConnectivityView& node_dof);
@@ -202,14 +224,21 @@ class FemModuleElastoplasticity
   RealMatrix<6, 6> _computeElementMatrixTria3(Cell cell);
   RealMatrix<12, 12> _computeElementMatrixTetra4(Cell cell);
   RealMatrix<8, 8> _computeElementMatrixQuad4(Cell cell);
+  RealMatrix<16, 16> _computeElementMatrixQuad8(Cell cell);
+  RealMatrix<18, 18> _computeElementMatrixQuad9(Cell cell);
   RealMatrix<24, 24> _computeElementMatrixHexa8(Cell cell);
+
+  RealMatrix<6, 6> _computeLocalVonMisesElementMatrixTria3Cpu(Cell cell, bool elastic_assembly = false);
+  RealMatrix<8, 8> _computeLocalVonMisesElementMatrixQuad4Cpu(Cell cell, bool elastic_assembly = false);
+  RealMatrix<16, 16> _computeLocalVonMisesElementMatrixQuad8Cpu(Cell cell, bool elastic_assembly = false);
+  RealMatrix<18, 18> _computeLocalVonMisesElementMatrixQuad9Cpu(Cell cell, bool elastic_assembly = false);
+  RealMatrix<6, 6> _computeLocalDruckerPragerElementMatrixTria3Cpu(Cell cell, bool elastic_assembly = false);
+
   IBinaryMathFunctor<Real, Real3, Real>* m_prescribed_settlement = nullptr;
 
   template <int N>
   void _assembleBilinearOperatorCpu(const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix);
 
-  inline Real _getL2NormFEM(const VariableNodeReal& u);
-  inline Real _getL2NormFEM(const VariableNodeReal3& u);
 };
 using namespace Arcane::FemUtils;
 
