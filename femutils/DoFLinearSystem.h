@@ -15,6 +15,7 @@
 /*---------------------------------------------------------------------------*/
 
 #include <arcane/utils/UtilsTypes.h>
+#include <arcane/utils/NumArray.h>
 
 #include <arcane/core/VariableTypedef.h>
 #include <arcane/core/ItemTypes.h>
@@ -167,7 +168,7 @@ class DoFLinearSystem
 
  public:
 
-  /*
+  /*!
    * \brief Initialize the instance.
    */
   void initialize(ISubDomain* sd, IItemFamily* dof_family, const String& solver_name);
@@ -178,6 +179,14 @@ class DoFLinearSystem
    * \a runner may be null.
    */
   void initialize(ISubDomain* sd, Runner* runner, IItemFamily* dof_family, const String& solver_name);
+
+  /*!
+   * \brief Initialize the instance with a specific runner and a specific matrix format
+   *
+   * \a runner may be null.
+   */
+  void initialize(ISubDomain* sd, Runner* runner, IItemFamily* dof_family,
+                  const String& solver_name, eLinearSystemMatrixFormat matrix_format);
 
   //! Indicate if method initialize() has been called
   [[nodiscard]] bool isInitialized() const;
@@ -193,7 +202,7 @@ class DoFLinearSystem
    */
   void matrixSetValue(DoFLocalId row, DoFLocalId column, Real value);
 
-  /*
+  /*!
    * \brief Helper class to eliminate rows in the linear system.
    *
    * The elimination of row \a row is equivalent to the following calls:
@@ -209,7 +218,7 @@ class DoFLinearSystem
    */
   DoFLinearSystemRowEliminationHelper rowEliminationHelper();
 
-  /*
+  /*!
    * \brief Eliminate rows and columns of the linear system.
    *
    * The elimination for a row \a row is equivalent to the following calls:
@@ -293,6 +302,19 @@ class DoFLinearSystem
    * fill the right hand side vector.
    */
   VariableDoFReal& rhsVariable();
+
+  /*!
+   * \brief Set vectors spanning the near null space used by AMG.
+   *
+   * The "vectors" have shape [# vectors][# local DoFs]. Allocation
+   * is transferred (NumArray::swap()) to the linear system. The
+   * "block_size" is the number of coupled unknowns at each physical
+   * point (for example 2 or 3 for displacement in linear elasticity).
+   *
+   * This method has to be called before the first call to solve(). An empty
+   * first dimension clears the near null space.
+   */
+  void setNearNullSpaceVectors(NumArray<Real, MDDim2>& vectors, Int32 block_size);
 
   //! Set the factory used to create the underlying linear system solver
   void setLinearSystemFactory(IDoFLinearSystemFactory* factory)
@@ -396,6 +418,7 @@ class DoFLinearSystem
  private:
 
   void _checkInit() const;
+  void _initCommon(ISubDomain* sd, IItemFamily* dof_family);
 
   // Used by DoFLinearSystemRowEliminationHelper
   void _eliminateRow(DoFLocalId row, Real value);

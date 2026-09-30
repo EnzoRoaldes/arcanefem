@@ -17,6 +17,7 @@
 
 #include <arcane/core/VariableTypes.h>
 #include <arcane/accelerator/core/Runner.h>
+#include <arcane/utils/NumArray.h>
 
 #include "internal/IDoFLinearSystemImpl.h"
 #include "internal/OrderedRowColumnMap.h"
@@ -51,6 +52,8 @@ class DoFLinearSystemImplBase
 
   VariableDoFReal& rhsVariable() final  {    return m_rhs_variable;  }
 
+  void setNearNullSpaceVectors(NumArray<Real, MDDim2>& vectors, Int32 block_size) override;
+
   VariableDoFBool& getForcedInfo() final { return m_dof_forced_info; }
   VariableDoFReal& getForcedValue() final { return m_dof_forced_value; }
   VariableDoFByte& getEliminationInfo() final { return m_dof_elimination_info; }
@@ -65,6 +68,12 @@ class DoFLinearSystemImplBase
   void setConstantMatrixValues(const bool val) final { m_constant_matrix_values = val; }
   bool isMatrixSparsityConstant() const final { return m_constant_matrix_sparsity; }
   bool isMatrixValuesConstant() const final { return m_constant_matrix_values; }
+
+ public:
+
+  const NumArray<Real, MDDim2>& nearNullSpaceValues() const { return m_near_null_space_values; }
+  Int32 nearNullSpaceBlockSize() const { return m_near_null_space_block_size; }
+  bool hasNearNullSpace() const { return m_near_null_space_values.extent0() != 0; }
 
  protected:
 
@@ -82,6 +91,9 @@ class DoFLinearSystemImplBase
   VariableDoFReal m_dof_forced_value;
   VariableDoFByte m_dof_elimination_info;
   VariableDoFReal m_dof_elimination_value;
+
+  NumArray<Real, MDDim2> m_near_null_space_values;
+  Int32 m_near_null_space_block_size = 1;
 
   //! Indicates if the matrix changes sparsity between solve() calls
   bool m_constant_matrix_sparsity = false;
