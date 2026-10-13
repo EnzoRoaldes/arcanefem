@@ -14,9 +14,11 @@ Input format:
 *I-Fem        [ArcaneFem-Timer] compute                = 8.16862058639526
 
 Blank lines separate runs. By default, process count halves at each block.
-Scaling plots show only the linear solve; --include-assembly adds LHS and RHS.
---solver-breakdown adds PCSetUp, KSPSolve and PCApply to scaling plots and
-exports solver_breakdown.png plus their times and metrics in scaling_metrics.csv.
+Scaling plots show only the linear solve; 
+--include-assembly adds LHS and RHS.
+--solver-breakdown adds PCSetUp, KSPSolve and PCApply to scaling plots.
+Their times and metrics, plus Time to solve, are exported in scaling_metrics.csv.
+Only the CSV and speedup/efficiency plots are generated.
 Use the full ASCII log produced with PETSc -log_view, not a timer-only extract.
 Runs are separated by '# procs=N ...' headers or Arcane startup banners.
 Process counts in headers/PETSc summaries are used when --procs is omitted.
@@ -30,10 +32,9 @@ inferred. Separate event maxima can also come from different MPI ranks.
 If several Time to solve lines occur in one run, their durations are summed.
 
 Examples:
-    python3 ploter.py ../outputs/WeakScaling.txt --start-procs 16 --mode weak --logx --outdir plots --initial-guess
-    python3 ploter.py ../outputs/StrongScaling.txt --procs 8 16 32 --mode strong --logx --outdir plots
-    python3 ploter.py ../outputs/StrongScaling.txt --procs 192 128 96 64 32 16 8 4 2 --mode strong --logx --include-assembly
-    python3 ploter.py ../outputs/logs_SS.txt --mode strong --logx --solver-breakdown
+    python3 ploter.py ../outputs/cpu/StrongScaling.txt --procs 192 128 96 64 32 16 8 4 2 --mode strong --logx --logy --include-assembly
+    python3 ploter.py ../outputs/gpu/StrongScaling.txt --procs 32 16 8 4 2 --mode strong --logx --logy
+    options : --mode | --procs | --logx --logy | --initial-guess | --solver-breakdown | --include-assembly
 """
 
 from __future__ import annotations
@@ -241,40 +242,6 @@ def setup_axes(logx: bool, logy: bool) -> None:
         plt.yscale("log", base=10)
 
 
-def safe_name(name: str) -> str:
-    return name.replace("/", "_").replace(" ", "_")
-
-
-def plot_time(
-    procs: np.ndarray,
-    times: np.ndarray,
-    timer: str,
-    outdir: Path,
-    logx: bool,
-    logy: bool,
-) -> None:
-    mask = ~np.isnan(times)
-    if not np.any(mask):
-        print(f"[warning] timer not found: {timer}")
-        return
-
-    plt.figure()
-    plt.plot(procs[mask], times[mask], marker="o", label=timer)
-    setup_axes(logx=logx, logy=logy)
-    plt.xlabel("Number of MPI processes")
-    plt.ylabel("Time (s)")
-    plt.title(f"Time: {timer}")
-    plt.grid(True, which="both")
-    plt.xticks(procs[mask], [str(p) for p in procs[mask]])
-    plt.legend()
-    plt.tight_layout()
-
-    outpath = outdir / f"time_{safe_name(timer)}.png"
-    plt.savefig(outpath, dpi=200)
-    plt.close()
-    print(f"[ok] wrote {outpath}")
-
-
 def plot_metric(
     procs: np.ndarray,
     values_by_timer: Dict[str, np.ndarray],
@@ -359,41 +326,6 @@ def write_csv(
     print(f"[ok] wrote {csv_path}")
 
 
-def plot_solver_breakdown(
-    procs: np.ndarray,
-    times_by_timer: Dict[str, np.ndarray],
-    outdir: Path,
-    logx: bool,
-    logy: bool,
-) -> None:
-    """Compare measured times; do not stack overlapping PETSc events."""
-    order = np.argsort(procs)
-    plt.figure(figsize=(9, 6))
-    for timer in [TIME_TO_SOLVE, *PETSC_EVENTS]:
-        values = times_by_timer[timer]
-        plt.plot(
-            procs[order], values[order], marker="o",
-            linestyle="--" if timer == "PCApply" else "-", label=timer,
-        )
-    setup_axes(logx, logy)
-    plt.xlabel("Number of MPI processes")
-    plt.ylabel("Time (s)")
-    plt.title("Time to solve: PETSc profile")
-    plt.xticks(procs[order], [str(p) for p in procs[order]])
-    plt.grid(True, which="both")
-    plt.legend()
-    plt.figtext(
-        0.5, 0.02,
-        "Events: MPI maximum times. PCApply overlaps other events; curves are not additive.",
-        ha="center", fontsize=9,
-    )
-    plt.tight_layout(rect=(0, 0.055, 1, 1))
-    outpath = outdir / "solver_breakdown.png"
-    plt.savefig(outpath, dpi=200)
-    plt.close()
-    print(f"[ok] wrote {outpath}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parse ArcaneFem-Timer logs and plot strong/weak scaling metrics."
@@ -404,7 +336,7 @@ def main() -> None:
     parser.add_argument("--start-procs", type=int, default=16)
     parser.add_argument("--procs", nargs="+", type=int, default=None)
     parser.add_argument("--timers", nargs="+", default=DEFAULT_TIMERS)
-    parser.add_argument("--outdir", type=Path, default=Path("plots"))
+    parser.add_argument("--outdir", type=Path, default=Path("../plots/plots"))
     parser.add_argument("--logx", action="store_true")
     parser.add_argument("--logy", action="store_true")
     parser.add_argument(
@@ -469,15 +401,12 @@ def main() -> None:
 
     write_csv(args.outdir, procs, timers, times_by_timer)
 
-    for timer, times in times_by_timer.items():
-        plot_time(procs, times, timer, args.outdir, args.logx, args.logy)
 
     if args.solver_breakdown:
-        plot_solver_breakdown(procs, times_by_timer, args.outdir, args.logx, args.logy)
         print("[info] PETSc events use Time (sec) Max and may overlap; do not sum them.")
 
     if args.mode == "none":
-        print("Choose an execution mode( week or strong)")
+        print("[info] CSV only. Use --mode strong or --mode weak for scaling plots.")
 
     scaling_timers = ["solve-linear-system-total"]
     if args.include_assembly:

@@ -71,7 +71,7 @@
 
     <matrix-format>BSR</matrix-format>
 
-    <use-skyscraper>true</use-skyscraper>
+    <!--use-skyscraper>true</use-skyscraper-->
 
     <boundary-conditions>
       <dirichlet>
@@ -106,13 +106,14 @@
       - format: Specifies the post-processing format, in this case, VtkHdfV2.
       - output: Lists the variables to be output during post-processing.
   -->
-  <arcane-post-processing>
+  <!-- <arcane-post-processing>
    <output-period>1</output-period>
-   <!-- <format name="VtkHdfV2PostProcessor" /> -->
+  <format name="VtkHdfV2PostProcessor" />  A commenter !!!
+   <format name="Ensight7PostProcessor" /> A essayer !!! 
    <output>
      <variable>U</variable>
      <variable>CellLambda</variable>
    </output>
-  </arcane-post-processing>
+  </arcane-post-processing> -->
 
 </case>

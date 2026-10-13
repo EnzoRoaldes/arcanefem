@@ -79,7 +79,7 @@
 
     <matrix-format>BSR</matrix-format>
 	
-    <use-skyscraper>true</use-skyscraper>
+    <!-- use-skyscraper>true</use-skyscraper -->
 
     <boundary-conditions>
       <dirichlet>

@@ -8,15 +8,14 @@ set -euo pipefail
 JOB_ID="${1:?Usage: $0 JOB_ID}"
 
 # MPI decomposition: PART_X * PART_Y must equal NB_PROCS.
-NB_PROCS=24
-PART_X=6
-PART_Y=4
+NB_PROCS=192
+PART_X=16
+PART_Y=12
 
 # Mesh and solver parameters.
-MESH_N=2000
-MESH_M=2000
-MAX_IT=200
-R_TOL=1e-8
+N=5000
+MAX_IT=500
+R_TOL=1e-10
 PC="gamg"
 SOLVER="cg"
 
@@ -105,8 +104,8 @@ complexity_values()
 }
 
 # Integer loop avoids floating-point accumulation errors in Bash.
-for threshold_index in {0..30..2}; do
-  printf -v AMG_THRESHOLD '0.0%02d' "$threshold_index"
+for threshold_index in {0..18..2}; do
+  printf -v AMG_THRESHOLD '0.%02d' "$threshold_index"
 
   LOG_FILE="$OUTPUT_DIR/threshold_${AMG_THRESHOLD}.log"
 
@@ -128,12 +127,12 @@ for threshold_index in {0..30..2}; do
     -A,//fem/petsc-flags="-ksp_monitor -ksp_converged_reason \
     -ksp_max_it $MAX_IT -ksp_rtol $R_TOL -ksp_view \
     -pc_type $PC -pc_gamg_threshold $AMG_THRESHOLD \
-    -ksp_type $SOLVER -ksp_initial_guess_nonzero" \
+    -ksp_type $SOLVER" \
     -A,//meshes/mesh/generator/nb-part-x="$PART_X" \
     -A,//meshes/mesh/generator/nb-part-y="$PART_Y" \
-    -A,//meshes/mesh/generator/x/n="$MESH_N" \
+    -A,//meshes/mesh/generator/x/n="$N" \
     -A,//meshes/mesh/generator/x/length=1.0 \
-    -A,//meshes/mesh/generator/y/n="$MESH_M" \
+    -A,//meshes/mesh/generator/y/n="$N" \
     -A,//meshes/mesh/generator/y/length=1.0 \
     -A,//fem/linear-system/@name=PetscLinearSystem \
     2>&1 | tee "$LOG_FILE"

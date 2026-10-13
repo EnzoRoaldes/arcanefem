@@ -14,7 +14,7 @@ MESH_N=5000
 MESH_M=5000
 MAX_IT=500
 R_TOL=1e-10
-PC="bjacobi"
+PC="gamg"
 SOLVER="cg"
 AMG_THRESHOLD=0.01
 
@@ -27,12 +27,12 @@ RESULTS_FILE="$OUTPUT_DIR/results.csv"
 
 PARTITIONS=(
   "1 64"
-  # "2 32"
-  # "4 16"
-  # "8 8"
-  # "16 4"
-  # "32 2"
-  # "64 1"
+  "2 32"
+  "4 16"
+  "8 8"
+  "16 4"
+  "32 2"
+  "64 1"
 )
 
 module load craype-x86-trento
