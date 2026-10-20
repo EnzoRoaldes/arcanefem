@@ -14,6 +14,8 @@
 #include "FemModule.h"
 #include "ElementMatrix.h"
 #include "ElementMatrixHexQuad.h"
+// enzo
+#include <arcane/core/IParallelMng.h>
 
 /*---------------------------------------------------------------------------*/
 /**
@@ -479,12 +481,37 @@ void FemModuleFourier::
 _solve()
 {
   info() << "[ArcaneFem-Info] Started module _solve()";
-  Real elapsedTime = platform::getRealTime();
 
-  m_linear_system.applyLinearSystemTransformationAndSolve();
+  const Int32 nb_repetitions = options()->solveRepetitions();
 
-  elapsedTime = platform::getRealTime() - elapsedTime;
-  ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), "solve-linear-system", elapsedTime);
+  auto* pm = parallelMng();
+  // cf /run/user/283963/gvfs/sftp:host=adastra/lus/work/RES1/genden15/eroaldes/software/src/fork_arcanefem/femutils/AlienDoFLinearSystem.cc
+  // l.128 >>>> IParallelMng* pm = dof_family->parallelMng();
+  auto* queue = subDomain()->acceleratorMng()->defaultQueue();
+  // cf /run/user/283963/gvfs/sftp:host=adastra/lus/work/RES1/genden15/eroaldes/software/src/fork_arcanefem/modules/testlab/CooSortGpuBiliAssembly.cc
+  // l.41 >>> RunQueue* queue = acceleratorMng()->defaultQueue();
+  
+  auto& solution = m_linear_system.solutionVariable();
+
+  m_linear_system.applyMatrixTransformation();
+  m_linear_system.applyRHSTransformation();
+  queue->barrier();
+
+  for (Int32 i = 0; i < nb_repetitions; ++i) {
+    solution.fill(0.0);
+    queue->barrier();
+    pm->barrier();
+
+    const Real start = platform::getRealTime();
+    m_linear_system.solve();
+    queue->barrier();
+    const Real local_time = platform::getRealTime() - start;
+    const Real time = pm->reduce(Parallel::ReduceMax, local_time);
+
+    const String name = String::format("solve-linear-system-{0}", i + 1);
+    ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), name, time);
+  }
+
 }
 
 /*---------------------------------------------------------------------------*/
