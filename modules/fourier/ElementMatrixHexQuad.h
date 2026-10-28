@@ -30,7 +30,7 @@
  */
 /*---------------------------------------------------------------------------*/
 
-RealMatrix<4, 4> FemModuleFourier::_computeElementMatrixQuad4(Cell cell)
+RealMatrix<4, 4> FemModuleFourier::_computeElementMatrixQuad4(MeshState& s, Cell cell)
 {
   // Gauss points and weights for 2x2 quadrature
   constexpr Real gp[2] = { -M_SQRT1_3, M_SQRT1_3 }; // [-1/sqrt(3) , 1/sqrt(3)]
@@ -49,7 +49,7 @@ RealMatrix<4, 4> FemModuleFourier::_computeElementMatrixQuad4(Cell cell)
       const Real eta = gp[ieta];
 
       // Get shape function gradients w.r.t (𝑥,𝑦) and determinant of Jacobian
-      const auto gp_info = ArcaneFemFunctions::FeOperation2D::computeGradientsAndJacobianQuad4(cell, m_node_coord, xi, eta);
+      const auto gp_info = ArcaneFemFunctions::FeOperation2D::computeGradientsAndJacobianQuad4(cell, s.node_coord, xi, eta);
       const RealVector<4>& dxU = gp_info.dN_dx;
       const RealVector<4>& dyU = gp_info.dN_dy;
       const Real detJ = gp_info.det_j;
@@ -164,7 +164,7 @@ computeElementVectorQuad4Gpu(CellLocalId cell_lid,
  */
 /*---------------------------------------------------------------------------*/
 
-RealMatrix<8, 8> FemModuleFourier::_computeElementMatrixHexa8(Cell cell)
+RealMatrix<8, 8> FemModuleFourier::_computeElementMatrixHexa8(MeshState& s, Cell cell)
 {
   // 2x2x2 Gauss points and weights for [-1,1]^3
   constexpr Real gp[2] = { -M_SQRT1_3, M_SQRT1_3 }; // -1/sqrt(3), 1/sqrt(3)
@@ -185,7 +185,7 @@ RealMatrix<8, 8> FemModuleFourier::_computeElementMatrixHexa8(Cell cell)
         const Real zeta = gp[izeta];
 
         // Get shape function gradients w.r.t (𝑥,𝑦,𝑧) and determinant of Jacobian
-        const auto gp_info = ArcaneFemFunctions::FeOperation3D::computeGradientsAndJacobianHexa8(cell, m_node_coord, xi, eta, zeta);
+        const auto gp_info = ArcaneFemFunctions::FeOperation3D::computeGradientsAndJacobianHexa8(cell, s.node_coord, xi, eta, zeta);
         const RealVector<8>& dxU = gp_info.dN_dx;
         const RealVector<8>& dyU = gp_info.dN_dy;
         const RealVector<8>& dzU = gp_info.dN_dz;

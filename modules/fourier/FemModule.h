@@ -39,6 +39,12 @@
 #include "ArcaneFemFunctionsGpu.h"
 #include "BSRFormat.h"
 
+///
+#include <memory>
+#include <arcane/core/VariableBuildInfo.h>
+#include <arcane/accelerator/core/RunQueue.h>
+///
+
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
 
@@ -55,6 +61,45 @@ namespace ax = Arcane::Accelerator;
  * systems, assemble FEM operators, and perform result checks.
  */
 /*---------------------------------------------------------------------------*/
+
+
+///
+struct MeshState
+{
+  IMesh* mesh;
+
+  VariableNodeReal u;
+  VariableNodeReal u_exact;
+  VariableNodeReal3 node_coord;
+  VariableCellReal cell_lambda;
+  String petsc_flags;
+  String matrix_format="DOK";
+  FemDoFsOnNodes dofs_on_nodes;
+  BSRFormat bsr_format;
+  DoFLinearSystem linear_system;
+
+  MeshState(IMesh* mesh_ptr,
+            ITraceMng* trace_mng,
+            ax::RunQueue& queue,
+            const String& suffix)
+  : mesh(mesh_ptr)
+  , u(VariableBuildInfo(mesh_ptr, "U" + suffix))
+  , u_exact(VariableBuildInfo(mesh_ptr, "UExact" + suffix))
+  , node_coord(mesh_ptr->nodesCoordinates())
+  , cell_lambda(VariableBuildInfo(mesh_ptr, "CellLambda" + suffix))
+  , dofs_on_nodes(trace_mng)
+  , bsr_format(trace_mng, queue, dofs_on_nodes)
+  {}
+
+  MeshState(const MeshState&) = delete;
+  MeshState(MeshState&&) = delete;
+  MeshState& operator=(MeshState&&) = delete;
+  MeshState& operator=(const MeshState&) = delete;
+};
+///
+
+
+
 
 class FemModuleFourier
 : public ArcaneFemObject
@@ -75,10 +120,15 @@ class FemModuleFourier
   void compute() override; //! Method called at each iteration
   VersionInfo versionInfo() const override { return VersionInfo(1, 0, 0); }
 
-  void _assembleBilinearOperator();
-  void _assembleLinearOperatorGpu();
+  void _assembleBilinearOperator(MeshState& s);
+  void _assembleLinearOperatorGpu(MeshState& s);
 
  private:
+
+  ///
+  std::unique_ptr<MeshState> m_fine;
+  std::unique_ptr<MeshState> m_coarse;
+  ///
 
   Real lambda;
   Real qdot;
@@ -98,23 +148,23 @@ class FemModuleFourier
   FemDoFsOnNodes m_dofs_on_nodes;
   BSRFormat m_bsr_format;
 
-  void _doStationarySolve();
-  void _getMaterialParameters();
-  void _solve();
-  void _assembleLinearOperator();
-  void _assembleLinearOperatorCpu();
-  void _validateResults();
-  void _updateVariables();
+  void _doStationarySolve(MeshState& s);
+  void _getMaterialParameters(MeshState& s);
+  void _solve(MeshState& s);
+  void _assembleLinearOperator(MeshState& s);
+  void _assembleLinearOperatorCpu(MeshState& s);
+  void _validateResults(MeshState& s);
+  void _updateVariables(MeshState& s);
 
-  RealMatrix<3, 3> _computeElementMatrixTria3(Cell cell);
-  RealMatrix<4, 4> _computeElementMatrixTetra4(Cell cell);
-  RealMatrix<4, 4> _computeElementMatrixQuad4(Cell cell);
-  RealMatrix<8, 8> _computeElementMatrixHexa8(Cell cell);
+  RealMatrix<3, 3> _computeElementMatrixTria3(MeshState& s, Cell cell);
+  RealMatrix<4, 4> _computeElementMatrixTetra4(MeshState& s, Cell cell);
+  RealMatrix<4, 4> _computeElementMatrixQuad4(MeshState& s, Cell cell);
+  RealMatrix<8, 8> _computeElementMatrixHexa8(MeshState& s, Cell cell);
   IBinaryMathFunctor<Real, Real3, Real>* m_manufactured_dirichlet = nullptr;
   IBinaryMathFunctor<Real, Real3, Real>* m_manufactured_source = nullptr;
 
   template<int N>
-  void _assembleBilinear( const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix);
+  void _assembleBilinear(MeshState& s, const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix);
 };
 
 #endif

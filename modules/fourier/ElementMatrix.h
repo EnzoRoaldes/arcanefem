@@ -25,12 +25,13 @@
  */
 /*---------------------------------------------------------------------------*/
 
-RealMatrix<3, 3> FemModuleFourier::_computeElementMatrixTria3(Cell cell)
+#include "FemModule.h"
+RealMatrix<3, 3> FemModuleFourier::_computeElementMatrixTria3(MeshState& s, Cell cell)
 {
-  Real area = ArcaneFemFunctions::MeshOperation::computeAreaTria3(cell, m_node_coord);
+  Real area = ArcaneFemFunctions::MeshOperation::computeAreaTria3(cell, s.node_coord);
 
-  Real3 dxU = ArcaneFemFunctions::FeOperation2D::computeGradientXTria3(cell, m_node_coord);
-  Real3 dyU = ArcaneFemFunctions::FeOperation2D::computeGradientYTria3(cell, m_node_coord);
+  Real3 dxU = ArcaneFemFunctions::FeOperation2D::computeGradientXTria3(cell, s.node_coord);
+  Real3 dyU = ArcaneFemFunctions::FeOperation2D::computeGradientYTria3(cell, s.node_coord);
 
   return area * lambda * (dxU ^ dxU) + area * lambda * (dyU ^ dyU);
 }
@@ -72,13 +73,13 @@ computeElementVectorTria3Gpu(CellLocalId cell_lid, const IndexedCellNodeConnecti
  */
 /*---------------------------------------------------------------------------*/
 
-RealMatrix<4, 4> FemModuleFourier::_computeElementMatrixTetra4(Cell cell)
+RealMatrix<4, 4> FemModuleFourier::_computeElementMatrixTetra4(MeshState& s, Cell cell)
 {
-  Real volume = ArcaneFemFunctions::MeshOperation::computeVolumeTetra4(cell, m_node_coord);
+  Real volume = ArcaneFemFunctions::MeshOperation::computeVolumeTetra4(cell, s.node_coord);
 
-  Real4 dxU = ArcaneFemFunctions::FeOperation3D::computeGradientXTetra4(cell, m_node_coord);
-  Real4 dyU = ArcaneFemFunctions::FeOperation3D::computeGradientYTetra4(cell, m_node_coord);
-  Real4 dzU = ArcaneFemFunctions::FeOperation3D::computeGradientZTetra4(cell, m_node_coord);
+  Real4 dxU = ArcaneFemFunctions::FeOperation3D::computeGradientXTetra4(cell, s.node_coord);
+  Real4 dyU = ArcaneFemFunctions::FeOperation3D::computeGradientYTetra4(cell, s.node_coord);
+  Real4 dzU = ArcaneFemFunctions::FeOperation3D::computeGradientZTetra4(cell, s.node_coord);
 
   return volume * lambda* (dxU ^ dxU) + volume * lambda * (dyU ^ dyU) + volume * lambda * (dzU ^ dzU);
 }

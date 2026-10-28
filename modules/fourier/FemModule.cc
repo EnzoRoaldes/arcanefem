@@ -16,6 +16,8 @@
 #include "ElementMatrixHexQuad.h"
 // enzo
 #include <arcane/core/IParallelMng.h>
+#include <arcane/core/IMeshMng.h>
+#include <arcane/core/MeshHandle.h>
 
 /*---------------------------------------------------------------------------*/
 /**
@@ -32,21 +34,41 @@ startInit()
   info() << "[ArcaneFem-Info] Started module startInit()";
   Real elapsedTime = platform::getRealTime();
 
-  m_dofs_on_nodes.initialize(mesh(), 1);
-  m_dof_family = m_dofs_on_nodes.dofFamily();
-  m_matrix_format = options()->matrixFormat();
   m_assemble_linear_system = options()->assembleLinearSystem();
   m_solve_linear_system = options()->solveLinearSystem();
   m_cross_validation = options()->hasSolutionComparisonFile();
-  m_petsc_flags = options()->petscFlags();
 
+  auto* mesh_mng = subDomain()->meshMng();
+  IMesh* fine_mesh = mesh_mng->findMeshHandle("FineMesh").mesh();
+  IMesh* coarse_mesh = mesh_mng->findMeshHandle("CoarseMesh").mesh();
+  if (!fine_mesh || !coarse_mesh || fine_mesh == coarse_mesh)
+    ARCANE_FATAL("Expected two distinct meshes: FineMesh and CoarseMesh");
+
+  auto queue = subDomain()->acceleratorMng()->queue();
+  m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), queue, "Fine");
+  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), queue, "Coarse");
+  
+  for (MeshState* s : {m_fine.get(), m_coarse.get()}) {
+    s->dofs_on_nodes.initialize(s->mesh, 1);
+    s->u.fill(0.0);
+  }
+
+  // Maillage fin
+  m_fine->matrix_format = options()->matrixFormatF();
+  m_fine->petsc_flags = options()->petscFlagsF();
+
+  // Maillage grossier
+  m_coarse->matrix_format = options()->matrixFormatC();
+  m_coarse->petsc_flags = options()->petscFlagsC();
+
+  
   // Check if the mesh is a quad or hex mesh by examining the number of nodes in the first cell
-  UnstructuredMeshConnectivityView connectivity(mesh());
+  // On suppose les deux maillage du même type
+  UnstructuredMeshConnectivityView connectivity(m_fine->mesh);
   const Int32 nb_node = connectivity.cellNode().nbNode(CellLocalId(0));
-
-  if (mesh()->dimension() == 2)
+  if (m_fine->mesh->dimension() == 2)
     m_is_quad4_mesh = (nb_node == 4);
-  else if (mesh()->dimension() == 3)
+  else if (m_fine->mesh->dimension() == 3)
     m_is_hexa8_mesh = (nb_node == 8);
 
   BC::IArcaneFemBC* bc = options()->boundaryConditions();
@@ -99,28 +121,51 @@ compute()
   if (m_global_iteration() > 0)
     subDomain()->timeLoopMng()->stopComputeLoop(true);
 
-  m_linear_system.reset();
-  m_linear_system.setLinearSystemFactory(options()->linearSystem());
-  m_linear_system.initialize(subDomain(),  acceleratorMng()->defaultRunner(),  m_dofs_on_nodes.dofFamily(), "Solver");
+  const String service_name = options()->linearSystem.serviceName();
 
-  if (m_petsc_flags != NULL){
-    CommandLineArguments args = ArcaneFemFunctions::GeneralFunctions::getPetscFlagsFromCommandline(m_petsc_flags);
-    m_linear_system.setSolverCommandLineArguments(args);
+  // cas m_fine
+  m_fine->linear_system.reset();
+  m_fine->linear_system.setLinearSystemFactory(options()->linearSystem());
+  m_fine->linear_system.initialize(subDomain(),  acceleratorMng()->defaultRunner(),  m_fine->dofs_on_nodes.dofFamily(), "Solver");
+
+  if (m_fine->petsc_flags != NULL){
+    CommandLineArguments args = ArcaneFemFunctions::GeneralFunctions::getPetscFlagsFromCommandline(m_fine->petsc_flags);
+    m_fine->linear_system.setSolverCommandLineArguments(args);
   }
-
-  if (m_matrix_format == "BSR" || m_matrix_format == "AF-BSR") {
-    bool use_csr_in_linear_system =
+  if (m_fine->matrix_format == "BSR" || m_fine->matrix_format == "AF-BSR") {
+    bool use_csr_in_linear_system_fine =
     options()->linearSystem.serviceName() == "HypreLinearSystem" ||
     options()->linearSystem.serviceName() == "AlienLinearSystem" ||
     options()->linearSystem.serviceName() == "PetscLinearSystem";
-    if (m_matrix_format == "BSR")
-      m_bsr_format.initialize(mesh(), 1, use_csr_in_linear_system, 0);
+    if (m_fine->matrix_format == "BSR")
+      m_fine->bsr_format.initialize(mesh(), 1, use_csr_in_linear_system_fine, 0);
     else
-      m_bsr_format.initialize(mesh(), 1, use_csr_in_linear_system, 1);
-    m_bsr_format.computeSparsity();
+      m_fine->bsr_format.initialize(mesh(), 1, use_csr_in_linear_system_fine, 1);
+    m_fine->bsr_format.computeSparsity();
+  }
+  // cas m_coarse
+  m_coarse->linear_system.reset();
+  m_coarse->linear_system.setLinearSystemFactory(options()->linearSystem());
+  m_coarse->linear_system.initialize(subDomain(),  acceleratorMng()->defaultRunner(),  m_coarse->dofs_on_nodes.dofFamily(), "Solver");
+
+  if (m_coarse->petsc_flags != NULL){
+    CommandLineArguments args = ArcaneFemFunctions::GeneralFunctions::getPetscFlagsFromCommandline(m_coarse->petsc_flags);
+    m_coarse->linear_system.setSolverCommandLineArguments(args);
+  }
+  if (m_coarse->matrix_format == "BSR" || m_coarse->matrix_format == "AF-BSR") {
+    bool use_csr_in_linear_system_coarse =
+    options()->linearSystem.serviceName() == "HypreLinearSystem" ||
+    options()->linearSystem.serviceName() == "AlienLinearSystem" ||
+    options()->linearSystem.serviceName() == "PetscLinearSystem";
+    if (m_coarse->matrix_format == "BSR")
+      m_coarse->bsr_format.initialize(mesh(), 1, use_csr_in_linear_system_coarse, 0);
+    else
+      m_coarse->bsr_format.initialize(mesh(), 1, use_csr_in_linear_system_coarse, 1);
+    m_coarse->bsr_format.computeSparsity();
   }
 
-  _doStationarySolve();
+  _doStationarySolve(*m_fine);
+  _doStationarySolve(*m_coarse);
 
   elapsedTime = platform::getRealTime() - elapsedTime;
   ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), "compute", elapsedTime);
@@ -141,21 +186,21 @@ compute()
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_doStationarySolve()
+_doStationarySolve(MeshState& s)
 {
-  _getMaterialParameters();
+  _getMaterialParameters(s);
   if(m_assemble_linear_system){
-    _assembleBilinearOperator();
-    _assembleLinearOperator();
+    _assembleBilinearOperator(s);
+    _assembleLinearOperator(s);
   }
 
   if(m_solve_linear_system){
-    _solve();
-    _updateVariables();
+    _solve(s);
+    _updateVariables(s);
   }
 
   if(m_cross_validation){
-    _validateResults();
+    _validateResults(s);
   }
 }
 
@@ -171,28 +216,28 @@ _doStationarySolve()
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_getMaterialParameters()
+_getMaterialParameters(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _getMaterialParameters()";
+  info() << "[ArcaneFem-Info] Started module _getMaterialParameters()" << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
 
   lambda = options()->lambda();
   qdot = options()->qdot();
 
-  m_cell_lambda.fill(lambda);
+  s.cell_lambda.fill(lambda);
 
   if (options()->useSkyscraper()) {
     // Skyscrapper behaviour
-    if (mesh()->dimension() != 2)
+    if (s.mesh->dimension() != 2)
       ARCANE_FATAL("The skyscraper material distribution requires a 2D mesh");
 
-    ENUMERATE_ (Cell, icell, allCells()) {
+    ENUMERATE_ (Cell, icell, s.mesh->allCells()) {
       Cell cell = *icell;
 
       Real3 center = Real3::zero();
 
       for (Node node : cell.nodes())
-        center += m_node_coord[node];
+        center += s.node_coord[node];
 
       const Real nb_nodes =
           static_cast<Real>(std::size(cell.nodes()));
@@ -206,21 +251,22 @@ _getMaterialParameters()
           static_cast<Int32>(std::floor(10.0 * center.y));
 
       if ((ix % 2 == 1) && (iy % 2 == 1))
-        m_cell_lambda[cell] = 100000.0 * (ix + iy + 1);
+        s.cell_lambda[cell] = 100000.0 * (ix + iy + 1);
     }
   }
   else {
     // Standard behaviour used by existing tests
     for (const auto& bs : options()->materialProperty()) {
-      CellGroup group = bs->volume();
+      const String group_name = bs->volume().name();
+      CellGroup group = s.mesh->cellFamily()->findGroup(group_name);
+      
       const Real value = bs->lambda();
 
       info() << "Lambda for group=" << group.name()
             << " v=" << value;
 
       ENUMERATE_ (Cell, icell, group) {
-        Cell cell = *icell;
-        m_cell_lambda[cell] = value;
+        s.cell_lambda[icell] = value;
       }
     }
   }
@@ -230,13 +276,13 @@ _getMaterialParameters()
 }
 
 void FemModuleFourier::
-_assembleLinearOperator()
+_assembleLinearOperator(MeshState& s)
 {
   if (options()->linearSystem.serviceName() == "HypreLinearSystem" ||
       options()->linearSystem.serviceName() == "PetscLinearSystem")
-    _assembleLinearOperatorGpu();
+    _assembleLinearOperatorGpu(s);
   else
-    _assembleLinearOperatorCpu();
+    _assembleLinearOperatorCpu(s);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -257,21 +303,21 @@ _assembleLinearOperator()
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_assembleLinearOperatorCpu()
+_assembleLinearOperatorCpu(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _assembleLinearOperator()";
+  info() << "[ArcaneFem-Info] Started module _assembleLinearOperator()" << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
 
-  if (m_matrix_format == "BSR" || m_matrix_format == "AF-BSR")
-    m_bsr_format.toLinearSystem(m_linear_system);
+  if (s.matrix_format == "BSR" || s.matrix_format == "AF-BSR")
+    s.bsr_format.toLinearSystem(s.linear_system);
 
-  VariableDoFReal& rhs_values(m_linear_system.rhsVariable()); // Temporary variable to keep values for the RHS
+  VariableDoFReal& rhs_values(s.linear_system.rhsVariable()); // Temporary variable to keep values for the RHS
   rhs_values.fill(0.0);
 
   auto node_dof(m_dofs_on_nodes.nodeDoFConnectivityView());
 
   if (options()->qdot.isPresent())
-    ArcaneFemFunctions::BoundaryConditions::applyConstantSourceToRhs(qdot, mesh(), node_dof, m_node_coord, rhs_values);
+    ArcaneFemFunctions::BoundaryConditions::applyConstantSourceToRhs(qdot, s.mesh, node_dof, s.node_coord, rhs_values);
 
   // Helper lambda to apply boundary conditions
   auto applyBoundaryConditions = [&](auto BCFunctions) {
@@ -280,30 +326,30 @@ _assembleLinearOperatorCpu()
 
       // Neumann
       for (BC::INeumannBoundaryCondition* bs : bc->neumannBoundaryConditions())
-        ArcaneFemFunctions::BoundaryConditions::applyNeumannToRhs(bs, mesh(), node_dof, m_node_coord, rhs_values);
+        ArcaneFemFunctions::BoundaryConditions::applyNeumannToRhs(bs, s.mesh, node_dof, s.node_coord, rhs_values);
 
       // Dirichlet
       for (BC::IDirichletBoundaryCondition* bs : bc->dirichletBoundaryConditions())
-        ArcaneFemFunctions::BoundaryConditions::applyDirichletToLhsAndRhs(bs, node_dof, m_linear_system, rhs_values);
+        ArcaneFemFunctions::BoundaryConditions::applyDirichletToLhsAndRhs(bs, node_dof, s.linear_system, rhs_values);
 
       // Manufactured boundary conditions
       for (BC::IManufacturedSolution* bs : bc->manufacturedSolutions()) {
         if (bs->getManufacturedSource()) {
           ARCANE_CHECK_POINTER(m_manufactured_source);
           info() << "Apply manufactured Source condition to all cells";
-          BCFunctions.applyManufacturedSourceToRhs(m_manufactured_source, mesh(), node_dof, m_node_coord, rhs_values);
+          BCFunctions.applyManufacturedSourceToRhs(m_manufactured_source, s.mesh, node_dof, s.node_coord, rhs_values);
         }
         if (bs->getManufacturedDirichlet()) {
           ARCANE_CHECK_POINTER(m_manufactured_dirichlet);
           info() << "Apply manufactured dirichlet condition to all borders";
-          FaceGroup group = mesh()->outerFaces();
-          BCFunctions.applyManufacturedDirichletToLhsAndRhs(m_manufactured_dirichlet, lambda, group, bs, node_dof, m_node_coord, m_linear_system, rhs_values);
+          FaceGroup group = s.mesh->outerFaces();
+          BCFunctions.applyManufacturedDirichletToLhsAndRhs(m_manufactured_dirichlet, lambda, group, bs, node_dof, s.node_coord, s.linear_system, rhs_values);
         }
       }
     }
   };
 
-   if (mesh()->dimension() == 3)
+   if (s.mesh->dimension() == 3)
      applyBoundaryConditions(ArcaneFemFunctions::BoundaryConditions3D());
    else
      applyBoundaryConditions(ArcaneFemFunctions::BoundaryConditions2D());
@@ -327,32 +373,30 @@ _assembleLinearOperatorCpu()
  */
 /*---------------------------------------------------------------------------*/
 
-void FemModuleFourier::_assembleLinearOperatorGpu()
+void FemModuleFourier::_assembleLinearOperatorGpu(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _assembleLinearOperatorGpu()";
+  info() << "[ArcaneFem-Info] Started module _assembleLinearOperatorGpu()" << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
 
-  m_bsr_format.toLinearSystem(m_linear_system);
+  s.bsr_format.toLinearSystem(s.linear_system);
 
-  auto& rhs_values(m_linear_system.rhsVariable());
+  auto& rhs_values(s.linear_system.rhsVariable());
   rhs_values.fill(0.0);
 
   // Because of Dirichlet (Penalty) implementation in Hypre.
-  m_linear_system.getForcedInfo().fill(false);
-
+  s.linear_system.getForcedInfo().fill(false);
   auto queue = subDomain()->acceleratorMng()->defaultQueue();
-  auto mesh_ptr = mesh();
 
   if (options()->qdot.isPresent())
-    FemUtils::Gpu::BoundaryConditions::applyConstantSourceToRhs(qdot, m_dofs_on_nodes, m_node_coord, rhs_values, mesh_ptr, queue);
+    FemUtils::Gpu::BoundaryConditions::applyConstantSourceToRhs(qdot, s.dofs_on_nodes, s.node_coord, rhs_values, s.mesh, queue);
 
   BC::IArcaneFemBC* bc = options()->boundaryConditions();
   if (bc) {
     for (BC::INeumannBoundaryCondition* bs : bc->neumannBoundaryConditions())
-      FemUtils::Gpu::BoundaryConditions::applyNeumannToRhs(bs, m_dofs_on_nodes, m_node_coord, rhs_values, mesh_ptr, queue);
+      FemUtils::Gpu::BoundaryConditions::applyNeumannToRhs(bs, s.dofs_on_nodes, s.node_coord, rhs_values, s.mesh, queue);
 
     for (BC::IDirichletBoundaryCondition* bs : bc->dirichletBoundaryConditions())
-      FemUtils::Gpu::BoundaryConditions::applyDirichletToLhsAndRhs(bs, m_dofs_on_nodes, m_linear_system, mesh_ptr, queue);
+      FemUtils::Gpu::BoundaryConditions::applyDirichletToLhsAndRhs(bs, s.dofs_on_nodes, s.linear_system, s.mesh, queue);
   }
 
   elapsedTime = platform::getRealTime() - elapsedTime;
@@ -366,61 +410,63 @@ void FemModuleFourier::_assembleLinearOperatorGpu()
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_assembleBilinearOperator()
+_assembleBilinearOperator(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _assembleBilinearOperator()";
+  info() << "[ArcaneFem-Info] Started module _assembleBilinearOperator()"  << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
 
-  if (m_matrix_format == "BSR" || m_matrix_format == "AF-BSR") {
-    UnstructuredMeshConnectivityView m_connectivity_view(mesh());
+  if (s.matrix_format == "BSR" || s.matrix_format == "AF-BSR") {
+    UnstructuredMeshConnectivityView m_connectivity_view(s.mesh);
     auto cn_cv = m_connectivity_view.cellNode();
     auto m_queue = subDomain()->acceleratorMng()->defaultQueue();
     auto command = makeCommand(m_queue);
-    auto in_node_coord = ax::viewIn(command, m_node_coord);
-    auto in_cell_lambda = ax::viewIn(command, m_cell_lambda);
+    auto in_node_coord = ax::viewIn(command, s.node_coord);
+    auto in_cell_lambda = ax::viewIn(command, s.cell_lambda);
 
-    if (mesh()->dimension() == 2)
-      if (m_matrix_format == "BSR") {
+    if (s.mesh->dimension() == 2) {
+      if (s.matrix_format == "BSR") {
         if(m_is_quad4_mesh)
-          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return _computeElementMatrixQuad4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+          s.bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return _computeElementMatrixQuad4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
         else
-          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+          s.bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
       }
       else {
         if(m_is_quad4_mesh)
-            m_bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorQuad4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });
+            s.bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorQuad4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });
           else
-            m_bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });      
+            s.bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorTria3Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });      
       }
+    }
       
-    if (mesh()->dimension() == 3)
-      if (m_matrix_format == "BSR") {
+    if (s.mesh->dimension() == 3) {
+      if (s.matrix_format == "BSR") {
         if(m_is_hexa8_mesh)
-          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return _computeElementMatrixHexa8Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+          s.bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return _computeElementMatrixHexa8Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
         else
-          m_bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
+          s.bsr_format.assembleBilinearAtomic([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid) { return computeElementMatrixTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda); });
       }
       else {
         if(m_is_hexa8_mesh)
-            m_bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorHexa8Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });
+            s.bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorHexa8Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });
           else
-            m_bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });      
+            s.bsr_format.assembleBilinearAtomicFree([=] ARCCORE_HOST_DEVICE(CellLocalId cell_lid, Int32 node_lid) { return computeElementVectorTetra4Gpu(cell_lid, cn_cv, in_node_coord, in_cell_lambda, node_lid); });      
       }
     }
+  }
 
-  if (m_matrix_format == "DOK") {
-    if (mesh()->dimension() == 3) {
+  if (s.matrix_format == "DOK") {
+    if (s.mesh->dimension() == 3) {
       if (m_is_hexa8_mesh)
-        _assembleBilinear<8>([this](const Cell& cell) { return _computeElementMatrixHexa8(cell); });
+        _assembleBilinear<8>(s, [this, &s](const Cell& cell) { return _computeElementMatrixHexa8(s, cell); });
       else
-        _assembleBilinear<4>([this](const Cell& cell) { return _computeElementMatrixTetra4(cell); });
+        _assembleBilinear<4>(s, [this, &s](const Cell& cell) { return _computeElementMatrixTetra4(s, cell); });
     }
 
-    if (mesh()->dimension() == 2) {
+    if (s.mesh->dimension() == 2) {
       if (m_is_quad4_mesh)
-        _assembleBilinear<4>([this](const Cell& cell) { return _computeElementMatrixQuad4(cell); });
+        _assembleBilinear<4>(s, [this, &s](const Cell& cell) { return _computeElementMatrixQuad4(s, cell); });
       else
-        _assembleBilinear<3>([this](const Cell& cell) { return _computeElementMatrixTria3(cell); });
+        _assembleBilinear<3>(s, [this, &s](const Cell& cell) { return _computeElementMatrixTria3(s, cell); });
     }
   }
 
@@ -442,14 +488,14 @@ _assembleBilinearOperator()
 
 template <int N>
 void FemModuleFourier::
-_assembleBilinear(const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix)
+_assembleBilinear(MeshState& s, const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix)
 {
-  auto node_dof(m_dofs_on_nodes.nodeDoFConnectivityView());
+  auto node_dof(s.dofs_on_nodes.nodeDoFConnectivityView());
 
-  ENUMERATE_ (Cell, icell, allCells()) {
+  ENUMERATE_ (Cell, icell, s.mesh->allCells()) {
     Cell cell = *icell;
 
-    lambda = m_cell_lambda[cell]; // lambda is always considered cell constant
+    lambda = s.cell_lambda[cell]; // lambda is always considered cell constant
     auto K_e = compute_element_matrix(cell); // element matrix based on the provided function
     Int32 n1_index = 0;
     for (Node node1 : cell.nodes()) {
@@ -457,7 +503,7 @@ _assembleBilinear(const std::function<RealMatrix<N, N>(const Cell&)>& compute_el
       for (Node node2 : cell.nodes()) {
         Real v = K_e(n1_index, n2_index);
         if (node1.isOwn()) {
-          m_linear_system.matrixAddValue(node_dof.dofId(node1, 0), node_dof.dofId(node2, 0), v);
+          s.linear_system.matrixAddValue(node_dof.dofId(node1, 0), node_dof.dofId(node2, 0), v);
         }
         ++n2_index;
       }
@@ -478,23 +524,19 @@ _assembleBilinear(const std::function<RealMatrix<N, N>(const Cell&)>& compute_el
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_solve()
+_solve(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _solve()";
+  info() << "[ArcaneFem-Info] Started module _solve()" << " mesh=" << s.mesh->name();
 
   const Int32 nb_repetitions = options()->solveRepetitions();
 
-  auto* pm = parallelMng();
-  // cf /run/user/283963/gvfs/sftp:host=adastra/lus/work/RES1/genden15/eroaldes/software/src/fork_arcanefem/femutils/AlienDoFLinearSystem.cc
-  // l.128 >>>> IParallelMng* pm = dof_family->parallelMng();
+  auto* pm = s.dofs_on_nodes.dofFamily()->parallelMng();
   auto* queue = subDomain()->acceleratorMng()->defaultQueue();
-  // cf /run/user/283963/gvfs/sftp:host=adastra/lus/work/RES1/genden15/eroaldes/software/src/fork_arcanefem/modules/testlab/CooSortGpuBiliAssembly.cc
-  // l.41 >>> RunQueue* queue = acceleratorMng()->defaultQueue();
   
-  auto& solution = m_linear_system.solutionVariable();
+  auto& solution = s.linear_system.solutionVariable();
 
-  m_linear_system.applyMatrixTransformation();
-  m_linear_system.applyRHSTransformation();
+  s.linear_system.applyMatrixTransformation();
+  s.linear_system.applyRHSTransformation();
   queue->barrier();
 
   for (Int32 i = 0; i < nb_repetitions; ++i) {
@@ -503,7 +545,7 @@ _solve()
     pm->barrier();
 
     const Real start = platform::getRealTime();
-    m_linear_system.solve();
+    s.linear_system.solve();
     queue->barrier();
     const Real local_time = platform::getRealTime() - start;
     const Real time = pm->reduce(Parallel::ReduceMax, local_time);
@@ -526,32 +568,32 @@ _solve()
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_updateVariables()
+_updateVariables(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _updateVariables()";
+  info() << "[ArcaneFem-Info] Started module _updateVariables()" << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
 
   { // copies solution (and optionally exact solution) to FEM output
-    VariableDoFReal& dof_u(m_linear_system.solutionVariable());
-    auto node_dof(m_dofs_on_nodes.nodeDoFConnectivityView());
+    VariableDoFReal& dof_u(s.linear_system.solutionVariable());
+    auto node_dof(s.dofs_on_nodes.nodeDoFConnectivityView());
 
-    ENUMERATE_ (Node, inode, ownNodes()) {
+    ENUMERATE_ (Node, inode, s.mesh->ownNodes()) {
       Node node = *inode;
       Real v = dof_u[node_dof.dofId(node, 0)];
-      m_u[node] = v;
+      s.u[node] = v;
     }
 
     for (BC::IManufacturedSolution* bs : options()->boundaryConditions()->manufacturedSolutions())
-      ENUMERATE_ (Node, inode, ownNodes()) {
+      ENUMERATE_ (Node, inode, s.mesh->ownNodes()) {
         Node node = *inode;
-        m_u_exact[node] = m_manufactured_dirichlet->apply(lambda, m_node_coord[node]);
+        s.u_exact[node] = m_manufactured_dirichlet->apply(lambda, s.node_coord[node]);
       }
   }
 
-  m_u.synchronize();
+  s.u.synchronize();
 
   for (BC::IManufacturedSolution* bs : options()->boundaryConditions()->manufacturedSolutions())
-    m_u_exact.synchronize();
+    s.u_exact.synchronize();
 
   elapsedTime = platform::getRealTime() - elapsedTime;
   ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), "update-variables", elapsedTime);
@@ -571,19 +613,22 @@ _updateVariables()
 /*---------------------------------------------------------------------------*/
 
 void FemModuleFourier::
-_validateResults()
+_validateResults(MeshState& s)
 {
-  info() << "[ArcaneFem-Info] Started module _validateResults()";
+  info() << "[ArcaneFem-Info] Started module _validateResults()" << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
 
-  ENUMERATE_ (Node, inode, allNodes()) {
+  ENUMERATE_ (Node, inode, s.mesh->allNodes()) {
     Node node = *inode;
-    info() << "u[" << node.uniqueId() << "] = " << m_u[node];
+    info() << "u[" << node.uniqueId() << "] = " << s.u[node];
   }
 
-  String filename = options()->solutionComparisonFile();
-
-  checkNodeResultFile(traceMng(), filename, m_u, 1.0e-4);
+  const bool is_fine = (&s == m_fine.get());
+  const String filename = is_fine
+      ? options()->solutionComparisonFileF()
+      : options()->solutionComparisonFileC();
+  
+  checkNodeResultFile(traceMng(), filename, s.u, 1.0e-4);
 
   elapsedTime = platform::getRealTime() - elapsedTime;
   ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(), "result-validation", elapsedTime);
