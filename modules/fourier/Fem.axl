@@ -65,7 +65,7 @@
     </simple>
 
     <!-- - - - - enzo-utils - - - - -->
-    <simple name="solve-repetitions" type="int32" default="5">
+    <simple name="solve-repetitions" type="int32" default="1">
       <description>Number of measured repeated solves, excluding the first preparation solve.</description>
     </simple>
 

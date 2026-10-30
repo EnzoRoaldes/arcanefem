@@ -27,15 +27,15 @@
   
 
   <meshes>
-    <mesh name="fine_mesh">
+    <mesh>
       <generator name="Cartesian2D">
         <x>
-          <n>7000</n>
+          <n>2000</n>
           <length>1.0</length>
         </x>
 
         <y>
-          <n>7000</n>
+          <n>2000</n>
           <length>1.0</length>
         </y>
 
@@ -49,15 +49,15 @@
       </generator>
     </mesh>
     
-    <mesh name="coarse_mesh">
+    <mesh>
       <generator name="Cartesian2D">
         <x>
-          <n>1000</n>
+          <n>2000</n>
           <length>1.0</length>
         </x>
 
         <y>
-          <n>1000</n>
+          <n>2000</n>
           <length>1.0</length>
         </y>
 
@@ -87,12 +87,12 @@
         - lambda: Thermal conductivity or diffusivity for the specified material.
   -->
   <fem>
-    <lambda>1.0</lambda-f>
+    <lambda>1.0</lambda>
 
     <qdot>100.0</qdot>
 
-    <matrix-format-f>AF-BSR</matrix-format-f>
-    <matrix-format-c>DOK</matrix-format-c>
+    <matrix-format-f>BSR</matrix-format-f>
+    <matrix-format-c>BSR</matrix-format-c>
 
     <!-- petsc-flags-f>blabla</petsc-flags-f-->
     <!-- petsc-flags-c>blabla</petsc-flags-c-->
