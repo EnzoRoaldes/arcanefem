@@ -39,11 +39,9 @@ startInit()
   m_cross_validation = options()->hasSolutionComparisonFile();
 
   auto* mesh_mng = subDomain()->meshMng();
-  info() << "INIT: constructing fine state";
   IMesh* fine_mesh = mesh_mng->findMeshHandle("Mesh0").mesh();
+  // 2eme arg pour mesh1 voir chat
   IMesh* coarse_mesh = mesh_mng->findMeshHandle("Mesh1").mesh();
-
-  
 
   if (!fine_mesh || !coarse_mesh || fine_mesh == coarse_mesh)
     ARCANE_FATAL("Expected two distinct meshes: FineMesh and CoarseMesh");
@@ -52,39 +50,25 @@ startInit()
   if (!queue)///
     ARCANE_FATAL("defaultQueue() returned nullptr");
 
-    info() << "INIT: coarse mesh=" << coarse_mesh->name()
-       << " nodes=" << coarse_mesh->allNodes().size()
-       << " cells=" << coarse_mesh->allCells().size();
-
   m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *queue, "Fine");
-  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), *queue, "Coarse");
-  
-  ///
-  info() << "Fine: mesh=" << m_fine->mesh->name()
-        << " format=" << m_fine->matrix_format;
-
-  info() << "Coarse: mesh=" << m_coarse->mesh->name()
-        << " format=" << m_coarse->matrix_format;
-  ///
-  
-  for (MeshState* s : {m_fine.get(), m_coarse.get()}) {
-    info() << "INIT: initializing DoFs" << s->mesh->name();
-    s->dofs_on_nodes.initialize(s->mesh, 1);
-    s->u.fill(0.0);
+  if (m_fine) {
+    info() << "INIT: initializing DoFs" << m_fine->mesh->name();
+    m_fine->dofs_on_nodes.initialize(m_fine->mesh, 1);
+    m_fine->u.fill(0.0);
+    m_fine->matrix_format = options()->matrixFormatF();
+    m_fine->petsc_flags = options()->petscFlagsF();
   }
-
-  info() << "INIT: both states initialized";
-  // Maillage fin
-  m_fine->matrix_format = options()->matrixFormatF();
-  m_fine->petsc_flags = options()->petscFlagsF();
-
-  // Maillage grossier
+  
+  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), *queue, "Coarse");
+  info() << "INIT: initializing DoFs" << m_coarse->mesh->name();
+  m_coarse->dofs_on_nodes.initialize(m_coarse->mesh, 1);
+  m_coarse->u.fill(0.0);
   m_coarse->matrix_format = options()->matrixFormatC();
   m_coarse->petsc_flags = options()->petscFlagsC();
 
   
   // Check if the mesh is a quad or hex mesh by examining the number of nodes in the first cell
-  // On suppose les deux maillage du même type
+  // We suppose both meshes have the same structure.
   UnstructuredMeshConnectivityView connectivity(m_fine->mesh);
   const Int32 nb_node = connectivity.cellNode().nbNode(CellLocalId(0));
   if (m_fine->mesh->dimension() == 2)
@@ -144,7 +128,6 @@ compute()
 
   const String service_name = options()->linearSystem.serviceName();
 
-  // cas m_fine
   m_fine->linear_system.reset();
   m_fine->linear_system.setLinearSystemFactory(options()->linearSystem());
   m_fine->linear_system.initialize(subDomain(),  acceleratorMng()->defaultRunner(),  m_fine->dofs_on_nodes.dofFamily(), "Solver");
@@ -164,7 +147,7 @@ compute()
       m_fine->bsr_format.initialize(m_fine->mesh, 1, use_csr_in_linear_system_fine, 1);
     m_fine->bsr_format.computeSparsity();
   }
-  // cas m_coarse
+
   m_coarse->linear_system.reset();
   m_coarse->linear_system.setLinearSystemFactory(options()->linearSystem());
   m_coarse->linear_system.initialize(subDomain(),  acceleratorMng()->defaultRunner(),  m_coarse->dofs_on_nodes.dofFamily(), "Solver");
@@ -435,29 +418,16 @@ _assembleBilinearOperator(MeshState& s)
 {
   info() << "[ArcaneFem-Info] Started module _assembleBilinearOperator()"  << " mesh=" << s.mesh->name();
   Real elapsedTime = platform::getRealTime();
-  info() << "ASSEMBLY 0: mesh=" << s.mesh->name() << "entrée";
   if (s.matrix_format == "BSR" || s.matrix_format == "AF-BSR") {
-    info() << "ASSEMBLY 1: mesh=" << s.mesh->name()
-         << " format=" << s.matrix_format
-         << " cells=" << s.mesh->allCells().size()
-         << " nodes=" << s.mesh->allNodes().size();
 
     auto m_queue = subDomain()->acceleratorMng()->defaultQueue();
     m_queue->barrier();
-    info() << "ASSEMBLY 2: queue ready";
 
     UnstructuredMeshConnectivityView m_connectivity_view(s.mesh);
     auto cn_cv = m_connectivity_view.cellNode();
-    info() << "ASSEMBLY 3: connectivity ready";
-
     auto command = makeCommand(m_queue);
-    info() << "ASSEMBLY 4: command ready";
-
     auto in_node_coord = ax::viewIn(command, s.node_coord);
-    info() << "ASSEMBLY 5: coordinates view ready";
-
     auto in_cell_lambda = ax::viewIn(command, s.cell_lambda);
-    info() << "ASSEMBLY 6: conductivity view ready";
 
     if (s.mesh->dimension() == 2) {
       if (s.matrix_format == "BSR") {
@@ -659,10 +629,11 @@ _validateResults(MeshState& s)
     info() << "u[" << node.uniqueId() << "] = " << s.u[node];
   }
 
-  const bool is_fine = (&s == m_fine.get());
-  const String filename = is_fine
-      ? options()->solutionComparisonFileF()
-      : options()->solutionComparisonFileC();
+  String filename = options()->solutionComparisonFile();
+  // const bool is_fine = (&s == m_fine.get());
+  // const String filename = is_fine
+  //     ? options()->solutionComparisonFileF()
+  //     : options()->solutionComparisonFileC();
   
   checkNodeResultFile(traceMng(), filename, s.u, 1.0e-4);
 

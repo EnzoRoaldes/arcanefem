@@ -46,9 +46,9 @@ if [[ "$MODE" == "gpu" ]]; then
   CASES=(
     # "32 8 4"
     # "16 4 4"
-    # "8 4 2"
-    # "4 2 2"
-    # "2 2 1"
+    "8 4 2"
+    "4 2 2"
+    "2 2 1"
     "1 1 1"
   )
 fi
@@ -56,11 +56,11 @@ fi
 SRUN_FLAGS=()
 ARCANE_FLAGS=()
 if [[ "$MODE" == "gpu" ]]; then
-  SRUN_FLAGS=(--gpus-per-task=1 --gpu-bind=single:1 --ntasks-per-node=8 --cpus-per-task=8)
-  ARCANE_FLAGS=(-A,AcceleratorRuntime=hip -A,//fem/matrix-format=AF-BSR)
-  export MPICH_GPU_SUPPORT_ENABLED=1
-  export HSA_XNACK=1
-  export MPICH_GPU_MANAGED_MEMORY_SUPPORT_ENABLED=1
+  SRUN_FLAGS=(--gpus-per-task=1 --gpu-bind=single:1 --cpus-per-task=8)
+  ARCANE_FLAGS=(-A,AcceleratorRuntime=hip -A,//fem/matrix-format=BSR)
+  # export MPICH_GPU_SUPPORT_ENABLED=1
+  # export HSA_XNACK=1
+  # export MPICH_GPU_MANAGED_MEMORY_SUPPORT_ENABLED=1
 fi
 
 
@@ -73,19 +73,19 @@ OUTPUT_FLAGS=(-A,//arcane-post-processing/output-period=0 -A,//arcane-post-proce
 cd ../..
 FOURIER_DIR="$PWD"
 
-ARC_FILE="$FOURIER_DIR/my_cases/inputs/conduction.center-source.arc"
+ARC_FILE="$FOURIER_DIR/my_cases/inputs/conduction.multimesh.arc"
 OUTPUT_DIR="$FOURIER_DIR/my_cases/outputs/$MODE"
 LOG_FILE="$OUTPUT_DIR/logs_SS.txt"
 TIMER_FILE="$OUTPUT_DIR/StrongScaling.txt"
 
 # --------------------------- Environment ---------------------------
 
-module load craype-x86-trento
-module load craype-accel-amd-gfx90a
-module load PrgEnv-amd #
-module load cmake/3.27.9 #
-module load rocm/6.4.3 # (différent)
-module load cray-hdf5-parallel/1.14.3.7 #
+# module load craype-x86-trento
+# module load craype-accel-amd-gfx90a
+# module load PrgEnv-amd #
+# module load cmake/3.27.9 #
+# module load rocm/6.4.3 # (différent)
+# module load cray-hdf5-parallel/1.14.3.7 #
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -152,19 +152,19 @@ run_fourier()
 
 # ------------------------------ Warm-up ----------------------------
 
-echo "========== Warm-up =========="
+# echo "========== Warm-up =========="
 
-# Use the first configuration with a smaller mesh.
-read -r WARMUP_PROCS WARMUP_X WARMUP_Y <<< "${CASES[0]}"
-if run_fourier "$WARMUP_PROCS" "$WARMUP_X" "$WARMUP_Y" 1000 \
-    >"$OUTPUT_DIR/warmup.log" 2>&1; then
-  echo "Warm-up completed."
-else
-  STATUS=$?
-  tail -n 40 "$OUTPUT_DIR/warmup.log" >&2
-  echo "Warm-up failed. Full log: $OUTPUT_DIR/warmup.log" >&2
-  exit "$STATUS"
-fi
+# # Use the first configuration with a smaller mesh.
+# read -r WARMUP_PROCS WARMUP_X WARMUP_Y <<< "${CASES[0]}"
+# if run_fourier "$WARMUP_PROCS" "$WARMUP_X" "$WARMUP_Y" 1000 \
+#     >"$OUTPUT_DIR/warmup.log" 2>&1; then
+#   echo "Warm-up completed."
+# else
+#   STATUS=$?
+#   tail -n 40 "$OUTPUT_DIR/warmup.log" >&2
+#   echo "Warm-up failed. Full log: $OUTPUT_DIR/warmup.log" >&2
+#   exit "$STATUS"
+# fi
 
 # ----------------------------- Benchmark ---------------------------
 

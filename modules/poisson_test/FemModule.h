@@ -1,0 +1,139 @@
+﻿// -*- tab-width: 2; indent-tabs-mode: nil; coding: utf-8-with-signature -*-
+//-----------------------------------------------------------------------------
+// Copyright 2000-2026 CEA (www.cea.fr) IFPEN (www.ifpenergiesnouvelles.com)
+// See the top-level COPYRIGHT file for details.
+// SPDX-License-Identifier: Apache-2.0
+//-----------------------------------------------------------------------------
+/*---------------------------------------------------------------------------*/
+/* FemModule.h                                                 (C) 2000-2026 */
+/*                                                                           */
+/* FemModulePoissonTest class definition.                                        */
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+#ifndef ARCANEFEM_MODULES_POISSON_H
+#define ARCANEFEM_MODULES_POISSON_H
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+
+#include <arcane/utils/CommandLineArguments.h>
+#include <arcane/utils/PlatformUtils.h>
+#include <arcane/utils/ParameterList.h>
+#include <arcane/utils/ApplicationInfo.h>
+#include <arcane/utils/ArcaneGlobal.h>
+#include <arcane/utils/NumArray.h>
+
+#include <arcane/core/ITimeLoopMng.h>
+#include <arcane/core/IItemFamily.h>
+#include <arcane/core/ItemGroup.h>
+#include <arcane/core/ICaseMng.h>
+#include <arcane/core/IMesh.h>
+#include <arcane/geometric/GeomElement.h>
+
+#include <arccore/base/NotImplementedException.h>
+
+#include <arcane/accelerator/core/IAcceleratorMng.h>
+#include <arcane/accelerator/VariableViews.h>
+
+#include "IDoFLinearSystemFactory.h"
+#include "ArcaneFemFunctionsGpu.h"
+#include "ArcaneFemFunctions.h"
+#include "DoFLinearSystem.h"
+#include "FemDoFsOnNodes.h"
+#include "IArcaneFemBC.h"
+#include "BSRFormat.h"
+#include "FemUtils.h"
+#include "ManufacturedSolutions.h"
+
+#include "Fem_axl.h"
+
+/*---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
+
+using namespace Arcane;
+using namespace Arcane::FemUtils;
+namespace ax = Arcane::Accelerator;
+
+/*---------------------------------------------------------------------------*/
+/**
+ * @brief A module for finite element method.
+ *
+ * This class handles the initialization and computation for finite element
+ * method (FEM) simulations, providing methods to  set  up and solve linear
+ * systems, assemble FEM operators, and perform result checks.
+ */
+/*---------------------------------------------------------------------------*/
+
+class FemModulePoissonTest
+: public ArcaneFemObject
+{
+ public:
+
+  explicit FemModulePoissonTest(const ModuleBuildInfo& mbi)
+  : ArcaneFemObject(mbi)
+  , m_dofs_on_nodes(mbi.subDomain()->traceMng())
+  , m_bsr_format(mbi.subDomain()->traceMng(), *(mbi.subDomain()->acceleratorMng()->defaultQueue()), m_dofs_on_nodes)
+  {
+    ICaseMng* cm = mbi.subDomain()->caseMng();
+    cm->setTreatWarningAsError(true);
+    cm->setAllowUnkownRootElelement(false);
+  }
+
+  void startInit() override; //! Method called at the beginning of the simulation
+  void compute() override; //! Method called at each iteration
+  VersionInfo versionInfo() const override { return VersionInfo(1, 0, 0); }
+
+  void _assembleBilinearOperator();
+  void _assembleLinearOperatorGpu();
+
+ private:
+
+  BSRFormat m_bsr_format;
+  DoFLinearSystem m_linear_system;
+  IItemFamily* m_dof_family = nullptr;
+  FemDoFsOnNodes m_dofs_on_nodes;
+
+  Real f;
+  Real m_manufactured_solution_tolerance = 1.0e-1;
+  String m_manufactured_solution_name;
+
+  String m_petsc_flags;
+  String m_matrix_format = "DOK";
+
+  bool m_assemble_linear_system = true;
+  bool m_solve_linear_system = true;
+  bool m_cross_validation = false;
+  bool m_has_manufactured_solution = false;
+  bool m_is_quad4_mesh = false;
+  bool m_is_quad8_mesh = false;
+  bool m_is_quad9_mesh = false;
+  bool m_is_hexa8_mesh = false;
+  bool m_is_hexa20_mesh = false;
+  bool m_is_hexa27_mesh = false;
+
+
+  void _doStationarySolve();
+  void _getMaterialParameters();
+  void _solve();
+  void _assembleLinearOperatorCpu();
+  void _assembleLinearOperator();
+  void _updateVariables();
+  void _validateResults();
+  void _updateManufacturedExactSolution();
+  void _applyManufacturedSource();
+  void _applyManufacturedDirichlet();
+
+  Real _computeManufacturedL2Error();
+
+  RealMatrix<3, 3> _computeElementMatrixTria3(Cell cell);
+  RealMatrix<4, 4> _computeElementMatrixTetra4(Cell cell);
+  RealMatrix<4, 4> _computeElementMatrixQuad4(Cell cell);
+  RealMatrix<8, 8> _computeElementMatrixQuad8(Cell cell);
+  RealMatrix<9, 9> _computeElementMatrixQuad9(Cell cell);
+  RealMatrix<8, 8> _computeElementMatrixHexa8(Cell cell);
+  RealMatrix<20, 20> _computeElementMatrixHexa20(Cell cell);
+  RealMatrix<27, 27> _computeElementMatrixHexa27(Cell cell);
+  template <int N>
+  void _assembleBilinear(const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix);
+};
+
+#endif

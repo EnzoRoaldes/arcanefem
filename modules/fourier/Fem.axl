@@ -35,12 +35,12 @@
       <description>File name of a file containing the values of the solution vector to check the results</description>
     </simple>
 
-    <simple name="solution-comparison-file-f" type="string" optional="true">
+    <!-- <simple name="solution-comparison-file-f" type="string" optional="true">
       <description>File name of a file containing the values of the solution vector to check the results</description>
     </simple>
     <simple name="solution-comparison-file-c" type="string" optional="true">
       <description>File name of a file containing the values of the solution vector to check the results</description>
-    </simple>
+    </simple> -->
 
     <simple name="matrix-format-f" type="string" default="AF-BSR" optional="true">
       <description>Which matrix format to use DOK|BSR|AF-BSR.</description>

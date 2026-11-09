@@ -73,7 +73,7 @@ struct MeshState
   VariableNodeReal3 node_coord;
   VariableCellReal cell_lambda;
   String petsc_flags;
-  String matrix_format="DOK";
+  String matrix_format="BSR";
   FemDoFsOnNodes dofs_on_nodes;
   BSRFormat bsr_format;
   DoFLinearSystem linear_system;
