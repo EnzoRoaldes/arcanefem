@@ -46,6 +46,12 @@
 
 #include "Fem_axl.h"
 
+///
+#include <memory>
+#include <arcane/core/VariableBuildInfo.h>
+#include <arcane/accelerator/core/RunQueue.h>
+///
+
 /*---------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------*/
 
@@ -63,6 +69,40 @@ namespace ax = Arcane::Accelerator;
  */
 /*---------------------------------------------------------------------------*/
 
+
+///
+struct MeshState
+{
+  IMesh* mesh;
+
+  VariableNodeReal u;
+  VariableNodeReal u_exact;
+  VariableNodeReal3 node_coord;
+  String matrix_format="BSR";
+  FemDoFsOnNodes dofs_on_nodes;
+  BSRFormat bsr_format;
+  DoFLinearSystem linear_system;
+
+  MeshState(IMesh* mesh_ptr,
+            ITraceMng* trace_mng,
+            ax::RunQueue& queue,
+            const String& suffix)
+  : mesh(mesh_ptr)
+  , u(VariableBuildInfo(mesh_ptr, "U" + suffix))
+  , u_exact(VariableBuildInfo(mesh_ptr, "UExact" + suffix))
+  , node_coord(mesh_ptr->nodesCoordinates())
+  , dofs_on_nodes(trace_mng)
+  , bsr_format(trace_mng, queue, dofs_on_nodes)
+  {}
+
+  MeshState(const MeshState&) = delete;
+  MeshState(MeshState&&) = delete;
+  MeshState& operator=(MeshState&&) = delete;
+  MeshState& operator=(const MeshState&) = delete;
+};
+///
+
+
 class FemModulePoissonTest
 : public ArcaneFemObject
 {
@@ -70,8 +110,6 @@ class FemModulePoissonTest
 
   explicit FemModulePoissonTest(const ModuleBuildInfo& mbi)
   : ArcaneFemObject(mbi)
-  , m_dofs_on_nodes(mbi.subDomain()->traceMng())
-  , m_bsr_format(mbi.subDomain()->traceMng(), *(mbi.subDomain()->acceleratorMng()->defaultQueue()), m_dofs_on_nodes)
   {
     ICaseMng* cm = mbi.subDomain()->caseMng();
     cm->setTreatWarningAsError(true);
@@ -82,58 +120,63 @@ class FemModulePoissonTest
   void compute() override; //! Method called at each iteration
   VersionInfo versionInfo() const override { return VersionInfo(1, 0, 0); }
 
-  void _assembleBilinearOperator();
-  void _assembleLinearOperatorGpu();
+  void _assembleBilinearOperator(MeshState& s);
+  void _assembleLinearOperatorGpu(MeshState& s);
 
  private:
 
-  BSRFormat m_bsr_format;
-  DoFLinearSystem m_linear_system;
+  ///
+  std::unique_ptr<MeshState> m_fine;
+  std::unique_ptr<MeshState> m_coarse;
+  ///
+
+  // BSRFormat m_bsr_format;
+  // DoFLinearSystem m_linear_system;
   IItemFamily* m_dof_family = nullptr;
-  FemDoFsOnNodes m_dofs_on_nodes;
+  // FemDoFsOnNodes m_dofs_on_nodes;
 
   Real f;
-  Real m_manufactured_solution_tolerance = 1.0e-1;
-  String m_manufactured_solution_name;
+  // Real m_manufactured_solution_tolerance = 1.0e-1;
+  // String m_manufactured_solution_name;
 
   String m_petsc_flags;
-  String m_matrix_format = "DOK";
+  // String m_matrix_format = "DOK";
 
   bool m_assemble_linear_system = true;
   bool m_solve_linear_system = true;
-  bool m_cross_validation = false;
-  bool m_has_manufactured_solution = false;
+  // bool m_cross_validation = false;
+  // bool m_has_manufactured_solution = false;
   bool m_is_quad4_mesh = false;
-  bool m_is_quad8_mesh = false;
-  bool m_is_quad9_mesh = false;
+  // bool m_is_quad8_mesh = false;
+  // bool m_is_quad9_mesh = false;
   bool m_is_hexa8_mesh = false;
-  bool m_is_hexa20_mesh = false;
-  bool m_is_hexa27_mesh = false;
+  // bool m_is_hexa20_mesh = false;
+  // bool m_is_hexa27_mesh = false;
 
 
-  void _doStationarySolve();
-  void _getMaterialParameters();
-  void _solve();
-  void _assembleLinearOperatorCpu();
-  void _assembleLinearOperator();
-  void _updateVariables();
-  void _validateResults();
-  void _updateManufacturedExactSolution();
-  void _applyManufacturedSource();
-  void _applyManufacturedDirichlet();
+  void _doStationarySolve(MeshState& s);
+  void _getMaterialParameters(MeshState& s);
+  void _solve(MeshState& s);
+  void _assembleLinearOperatorCpu(MeshState& s);
+  void _assembleLinearOperator(MeshState& s);
+  void _updateVariables(MeshState& s);
+  // void _validateResults(MeshState& s);
+  // void _updateManufacturedExactSolution();
+  // void _applyManufacturedSource();
+  // void _applyManufacturedDirichlet();
 
-  Real _computeManufacturedL2Error();
+  // Real _computeManufacturedL2Error();
 
-  RealMatrix<3, 3> _computeElementMatrixTria3(Cell cell);
-  RealMatrix<4, 4> _computeElementMatrixTetra4(Cell cell);
-  RealMatrix<4, 4> _computeElementMatrixQuad4(Cell cell);
-  RealMatrix<8, 8> _computeElementMatrixQuad8(Cell cell);
-  RealMatrix<9, 9> _computeElementMatrixQuad9(Cell cell);
-  RealMatrix<8, 8> _computeElementMatrixHexa8(Cell cell);
-  RealMatrix<20, 20> _computeElementMatrixHexa20(Cell cell);
-  RealMatrix<27, 27> _computeElementMatrixHexa27(Cell cell);
+  RealMatrix<3, 3> _computeElementMatrixTria3(MeshState& s, Cell cell);
+  RealMatrix<4, 4> _computeElementMatrixTetra4(MeshState& s, Cell cell);
+  RealMatrix<4, 4> _computeElementMatrixQuad4(MeshState& s, Cell cell);
+  // RealMatrix<8, 8> _computeElementMatrixQuad8(Cell cell);
+  // RealMatrix<9, 9> _computeElementMatrixQuad9(Cell cell);
+  RealMatrix<8, 8> _computeElementMatrixHexa8(MeshState& s, Cell cell);
+  // RealMatrix<20, 20> _computeElementMatrixHexa20(Cell cell);
+  // RealMatrix<27, 27> _computeElementMatrixHexa27(Cell cell);
   template <int N>
-  void _assembleBilinear(const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix);
+  void _assembleBilinear(MeshState& s, const std::function<RealMatrix<N, N>(const Cell&)>& compute_element_matrix);
 };
 
 #endif

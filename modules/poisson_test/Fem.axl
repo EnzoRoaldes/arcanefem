@@ -24,11 +24,14 @@
       <description>Volume source within the material.</description>
     </simple>
 
-    <simple name="solution-comparison-file" type="string" optional="true">
+    <!-- <simple name="solution-comparison-file" type="string" optional="true">
       <description>File name of a file containing the values of the solution vector to check the results</description>
-    </simple>
+    </simple> -->
 
-    <simple name="matrix-format" type="string" default="DOK" optional="true">
+    <simple name="matrix-format-c" type="string" default="BSR" optional="true">
+      <description>Which matrix format to use DOK|BSR|AF-BSR.</description>
+    </simple>
+    <simple name="matrix-format-f" type="string" default="BSR" optional="true">
       <description>Which matrix format to use DOK|BSR|AF-BSR.</description>
     </simple>
 
@@ -44,16 +47,16 @@
       <description>Boolean to enable linear system assembly.</description>
     </simple>
 
-    <simple name="manufactured-solution-tolerance" type="real" default="1.0e-1" optional="true">
+    <!-- <simple name="manufactured-solution-tolerance" type="real" default="1.0e-1" optional="true">
       <description>Maximum L2 error accepted for manufactured-solution tests.</description>
     </simple>
 
     <simple name="manufactured-solution" type="string" default="" optional="true">
       <description>Built-in manufactured solution case: sine, poly, or empty to disable.</description>
-    </simple>
+    </simple> -->
 
     <!-- Linear system service instance -->
-    <service-instance name="linear-system" type="Arcane::FemUtils::IDoFLinearSystemFactory" default="AlephLinearSystem" />
+    <service-instance name="linear-system" type="Arcane::FemUtils::IDoFLinearSystemFactory" default="HypreLinearSystem" />
 
     <!-- Boundary conditions service instance -->
     <service-instance name = "boundary-conditions" type = "BC::IArcaneFemBC" optional = "true" default="FemBoundaryConditions" />
