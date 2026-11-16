@@ -34,7 +34,6 @@ startInit()
   Real elapsedTime = platform::getRealTime();
 
   auto* mesh_mng = subDomain()->meshMng();
-  auto* queue = subDomain()->acceleratorMng()->defaultQueue();
 
   IMesh* fine_mesh = mesh_mng->findMeshHandle("Mesh0").mesh();
   // 2eme arg pour mesh1 voir chat
@@ -43,8 +42,11 @@ startInit()
   if (!fine_mesh || !coarse_mesh || fine_mesh == coarse_mesh)
     ARCANE_FATAL("Expected two distinct meshes: FineMesh and CoarseMesh");
 
-  m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *queue);
-  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), *queue);
+  ax::Runner cpu_runner(ax::eExecutionPolicy::Sequential);
+  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), cpu_runner);
+
+  auto* gpu_runner = subDomain()->acceleratorMng()->defaultRunner();
+  m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *gpu_runner);
 
   m_fine->dofs_on_nodes.initialize(m_fine->mesh, 1);
   m_coarse->dofs_on_nodes.initialize(m_coarse->mesh, 1);
@@ -121,12 +123,12 @@ compute()
   m_fine->linear_system.setLinearSystemFactory(options()->linearSystem());
   m_coarse->linear_system.setLinearSystemFactory(options()->linearSystem());
   if (is_change_format_supported) {
-    m_fine->linear_system.initialize(subDomain(), acceleratorMng()->defaultRunner(), m_fine->dofs_on_nodes.dofFamily(), "Solver", format_f);
-    m_coarse->linear_system.initialize(subDomain(), acceleratorMng()->defaultRunner(), m_coarse->dofs_on_nodes.dofFamily(), "Solver", format_c);
+    m_fine->linear_system.initialize(subDomain(), &m_fine->runner, m_fine->dofs_on_nodes.dofFamily(), "Solver", format_f);
+    m_coarse->linear_system.initialize(subDomain(), &m_coarse->runner, m_coarse->dofs_on_nodes.dofFamily(), "Solver", format_c);
   }
   else {
-    m_fine->linear_system.initialize(subDomain(), acceleratorMng()->defaultRunner(), m_fine->dofs_on_nodes.dofFamily(), "Solver");
-    m_coarse->linear_system.initialize(subDomain(), acceleratorMng()->defaultRunner(), m_coarse->dofs_on_nodes.dofFamily(), "Solver");
+    m_fine->linear_system.initialize(subDomain(), &m_fine->runner, m_fine->dofs_on_nodes.dofFamily(), "Solver");
+    m_coarse->linear_system.initialize(subDomain(), &m_coarse->runner, m_coarse->dofs_on_nodes.dofFamily(), "Solver");
   }
 
   if (m_petsc_flags != NULL) {
@@ -267,7 +269,7 @@ void FemModulePoissonTest::_assembleLinearOperatorGpu(MeshState& s)
   // Because of Dirichlet (Penalty) implementation in Hypre.
   s.linear_system.getForcedInfo().fill(false);
 
-  auto queue = subDomain()->acceleratorMng()->defaultQueue();
+  auto queue = &s.queue;
   auto mesh_ptr = s.mesh;
 
   if (options()->f.isPresent())
@@ -357,7 +359,7 @@ _assembleBilinearOperator(MeshState& s)
   if (s.matrix_format == "BSR") {
     UnstructuredMeshConnectivityView m_connectivity_view(s.mesh);
     auto cn_cv = m_connectivity_view.cellNode();
-    auto queue = subDomain()->acceleratorMng()->defaultQueue();
+    auto queue = &s.queue;
     auto command = makeCommand(queue);
     auto in_node_coord = ax::viewIn(command, s.node_coord);
 
@@ -396,7 +398,7 @@ _assembleBilinearOperator(MeshState& s)
   if (s.matrix_format == "AF-BSR") {
     UnstructuredMeshConnectivityView m_connectivity_view(mesh());
     auto cn_cv = m_connectivity_view.cellNode();
-    auto queue = subDomain()->acceleratorMng()->defaultQueue();
+    auto queue = &s.queue;
     auto command = makeCommand(queue);
     auto in_node_coord = ax::viewIn(command, s.node_coord);
 

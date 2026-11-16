@@ -49,6 +49,7 @@
 ///
 #include <memory>
 #include <arcane/core/VariableBuildInfo.h>
+#include <arcane/accelerator/core/Runner.h>
 #include <arcane/accelerator/core/RunQueue.h>
 ///
 
@@ -75,6 +76,9 @@ struct MeshState
 {
   IMesh* mesh;
 
+  ax::Runner runner;
+  ax::RunQueue queue;
+
   VariableNodeReal u;
   VariableNodeReal u_exact;
   VariableNodeReal3 node_coord;
@@ -85,8 +89,10 @@ struct MeshState
 
   MeshState(IMesh* mesh_ptr,
             ITraceMng* trace_mng,
-            ax::RunQueue& queue)
+            const ax::Runner& execution_runner)
   : mesh(mesh_ptr)
+  , runner(execution_runner)
+  , queue(ax::makeQueue(runner))
   , u(VariableBuildInfo(mesh_ptr, "U"))
   , u_exact(VariableBuildInfo(mesh_ptr, "UExact"))
   , node_coord(mesh_ptr->nodesCoordinates())
