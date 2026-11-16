@@ -11,12 +11,12 @@
     <variable field-name="u" name="U" data-type="real" item-kind="node" dim="0">
       <description>FEM variable u on nodes</description>
     </variable>
-    <variable field-name="u_exact" name="UExact" data-type="real" item-kind="node" dim="0" optional="true">
+    <!-- <variable field-name="u_exact" name="UExact" data-type="real" item-kind="node" dim="0" optional="true">
       <description>Manufactured FEM solution on nodes</description>
     </variable>
     <variable field-name="node_coord" name="NodeCoord" data-type="real3" item-kind="node" dim="0">
       <description>Node coordinates from Arcane variable</description>
-    </variable>
+    </variable> -->
   </variables>
 
   <options>
@@ -59,6 +59,8 @@
     <service-instance name="linear-system" type="Arcane::FemUtils::IDoFLinearSystemFactory" default="HypreLinearSystem" />
 
     <!-- Boundary conditions service instance -->
-    <service-instance name = "boundary-conditions" type = "BC::IArcaneFemBC" optional = "true" default="FemBoundaryConditions" />
+    <service-instance name = "boundary-conditions-c" mesh-name="Mesh0" type = "BC::IArcaneFemBC" optional = "true" default="FemBoundaryConditions" />
+
+    <service-instance name = "boundary-conditions-f" mesh-name="Mesh1" type = "BC::IArcaneFemBC" optional = "true" default="FemBoundaryConditions" />
   </options>
 </module>

@@ -7,22 +7,23 @@
 
   <arcane-post-processing>
    <output-period>1</output-period>
-   <format name="VtkHdfV2PostProcessor" />
+   <!-- <format name="VtkHdfV2PostProcessor" /> -->
    <output>
      <variable>U</variable>
    </output>
   </arcane-post-processing>
 
   <meshes>
+    <!-- coarse mesh (CPU) -->
     <mesh>
       <generator name="Cartesian2D">
         <x>
-          <n>2000</n>
+          <n>400</n>
           <length>1.0</length>
         </x>
 
         <y>
-          <n>2000</n>
+          <n>400</n>
           <length>1.0</length>
         </y>
 
@@ -35,16 +36,17 @@
 
       </generator>
     </mesh>
-    
+
+    <!-- fine mesh (GPU) -->
     <mesh>
       <generator name="Cartesian2D">
         <x>
-          <n>2000</n>
+          <n>200</n>
           <length>1.0</length>
         </x>
 
         <y>
-          <n>2000</n>
+          <n>200</n>
           <length>1.0</length>
         </y>
 
@@ -56,17 +58,37 @@
         <generate-sod-groups>true</generate-sod-groups>
 
       </generator>
+      <!-- <mesh-builder-customiser name="ArcaneParallelMngSplitterMeshBuilderCustomiser">
+        <subset-ratio>2</subset-ratio>
+      </mesh-builder-customiser> -->
     </mesh>
   </meshes>
 
   <fem>
     <f>5.5</f>
-    <boundary-conditions>
+    <boundary-conditions-c>
       <dirichlet>
         <enforce-Dirichlet-method>RowColumnElimination</enforce-Dirichlet-method>
         <surface>XMIN</surface>
         <value>0.5</value>
       </dirichlet>
-    </boundary-conditions>
+      <dirichlet>
+        <enforce-Dirichlet-method>RowColumnElimination</enforce-Dirichlet-method>
+        <surface>XMAX</surface>
+        <value>10</value>
+      </dirichlet>
+    </boundary-conditions-c>
+    <boundary-conditions-f>
+      <dirichlet>
+        <enforce-Dirichlet-method>RowColumnElimination</enforce-Dirichlet-method>
+        <surface>XMIN</surface>
+        <value>0.5</value>
+      </dirichlet>
+      <dirichlet>
+        <enforce-Dirichlet-method>RowColumnElimination</enforce-Dirichlet-method>
+        <surface>XMAX</surface>
+        <value>10</value>
+      </dirichlet>
+    </boundary-conditions-f>
   </fem>
 </case>

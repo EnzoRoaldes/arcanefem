@@ -43,8 +43,8 @@ startInit()
   if (!fine_mesh || !coarse_mesh || fine_mesh == coarse_mesh)
     ARCANE_FATAL("Expected two distinct meshes: FineMesh and CoarseMesh");
 
-  m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *queue, "Fine");
-  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), *queue, "Coarse");
+  m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *queue);
+  m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), *queue);
 
   m_fine->dofs_on_nodes.initialize(m_fine->mesh, 1);
   m_coarse->dofs_on_nodes.initialize(m_coarse->mesh, 1);
@@ -273,7 +273,11 @@ void FemModulePoissonTest::_assembleLinearOperatorGpu(MeshState& s)
   if (options()->f.isPresent())
     FemUtils::Gpu::BoundaryConditions::applyConstantSourceToRhs(f, s.dofs_on_nodes, s.node_coord, rhs_values, mesh_ptr, queue);
 
-  BC::IArcaneFemBC* bc = options()->boundaryConditions();
+  BC::IArcaneFemBC* bc = nullptr;
+  if (s.mesh->name() == "Mesh0")
+    bc = options()->boundaryConditionsC();
+  else
+    bc = options()->boundaryConditionsF();
   if (bc) {
     for (BC::INeumannBoundaryCondition* bs : bc->neumannBoundaryConditions())
       FemUtils::Gpu::BoundaryConditions::applyNeumannToRhs(bs, s.dofs_on_nodes, s.node_coord, rhs_values, mesh_ptr, queue);
@@ -317,7 +321,12 @@ void FemModulePoissonTest::_assembleLinearOperatorCpu(MeshState& s)
   if (options()->f.isPresent())
     ArcaneFemFunctions::BoundaryConditions::applyConstantSourceToRhs(f, s.mesh, node_dof, s.node_coord, rhs_values);
 
-  BC::IArcaneFemBC* bc = options()->boundaryConditions();
+  BC::IArcaneFemBC* bc = nullptr;
+  if (s.mesh->name() == "Mesh0")
+    bc = options()->boundaryConditionsC();
+  else
+    bc = options()->boundaryConditionsF();
+
   if (bc) {
     for (BC::INeumannBoundaryCondition* bs : bc->neumannBoundaryConditions())
       ArcaneFemFunctions::BoundaryConditions::applyNeumannToRhs(bs, s.mesh, node_dof, s.node_coord, rhs_values);
@@ -350,7 +359,7 @@ _assembleBilinearOperator(MeshState& s)
     auto cn_cv = m_connectivity_view.cellNode();
     auto queue = subDomain()->acceleratorMng()->defaultQueue();
     auto command = makeCommand(queue);
-    auto in_node_coord = ax::viewIn(command, m_node_coord);
+    auto in_node_coord = ax::viewIn(command, s.node_coord);
 
     if (s.mesh->dimension() == 2){
       // if (m_is_quad8_mesh)
@@ -389,7 +398,7 @@ _assembleBilinearOperator(MeshState& s)
     auto cn_cv = m_connectivity_view.cellNode();
     auto queue = subDomain()->acceleratorMng()->defaultQueue();
     auto command = makeCommand(queue);
-    auto in_node_coord = ax::viewIn(command, m_node_coord);
+    auto in_node_coord = ax::viewIn(command, s.node_coord);
 
     if (s.mesh->dimension() == 2)
       // if (m_is_quad8_mesh)
@@ -528,9 +537,11 @@ _updateVariables(MeshState& s)
   {
     VariableDoFReal& dof_u(s.linear_system.solutionVariable());
     auto node_dof(s.dofs_on_nodes.nodeDoFConnectivityView());
-    ENUMERATE_ (Node, inode, ownNodes()) {
+    ENUMERATE_ (Node, inode, s.mesh->ownNodes()) {
       Node node = *inode;
       s.u[node] = dof_u[node_dof.dofId(node, 0)];
+      if (node.localId() < 10)
+        info() << "s.u= " << s.u[node];
     }
   }
 

@@ -85,11 +85,10 @@ struct MeshState
 
   MeshState(IMesh* mesh_ptr,
             ITraceMng* trace_mng,
-            ax::RunQueue& queue,
-            const String& suffix)
+            ax::RunQueue& queue)
   : mesh(mesh_ptr)
-  , u(VariableBuildInfo(mesh_ptr, "U" + suffix))
-  , u_exact(VariableBuildInfo(mesh_ptr, "UExact" + suffix))
+  , u(VariableBuildInfo(mesh_ptr, "U"))
+  , u_exact(VariableBuildInfo(mesh_ptr, "UExact"))
   , node_coord(mesh_ptr->nodesCoordinates())
   , dofs_on_nodes(trace_mng)
   , bsr_format(trace_mng, queue, dofs_on_nodes)
