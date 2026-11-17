@@ -137,7 +137,7 @@ class FemModulePoissonTest
 
   // BSRFormat m_bsr_format;
   // DoFLinearSystem m_linear_system;
-  IItemFamily* m_dof_family = nullptr;
+  // IItemFamily* m_dof_family = nullptr;
   // FemDoFsOnNodes m_dofs_on_nodes;
 
   Real f;

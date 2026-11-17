@@ -35,26 +35,26 @@ startInit()
 
   auto* mesh_mng = subDomain()->meshMng();
 
-  IMesh* fine_mesh = mesh_mng->findMeshHandle("Mesh0").mesh();
   // 2eme arg pour mesh1 voir chat
-  IMesh* coarse_mesh = mesh_mng->findMeshHandle("Mesh1").mesh();
-
-  if (!fine_mesh || !coarse_mesh || fine_mesh == coarse_mesh)
-    ARCANE_FATAL("Expected two distinct meshes: FineMesh and CoarseMesh");
+  IMesh* coarse_mesh = mesh_mng->findMeshHandle("Mesh0").mesh();
+  auto* fine_handle = mesh_mng->findMeshHandle("Mesh1", false);
+  IMesh* fine_mesh = fine_handle ? fine_handle->mesh() : nullptr;
 
   ax::Runner cpu_runner(ax::eExecutionPolicy::Sequential);
   m_coarse = std::make_unique<MeshState>(coarse_mesh, traceMng(), cpu_runner);
-
-  auto* gpu_runner = subDomain()->acceleratorMng()->defaultRunner();
-  m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *gpu_runner);
-
-  m_fine->dofs_on_nodes.initialize(m_fine->mesh, 1);
   m_coarse->dofs_on_nodes.initialize(m_coarse->mesh, 1);
-
-  m_dof_family = m_fine->dofs_on_nodes.dofFamily();///
-
-  m_fine->matrix_format = options()->matrixFormatF();
   m_coarse->matrix_format = options()->matrixFormatC();
+
+  if (fine_mesh) {
+    auto* gpu_runner = subDomain()->acceleratorMng()->defaultRunner();
+    m_fine = std::make_unique<MeshState>(fine_mesh, traceMng(), *gpu_runner);
+    m_fine->dofs_on_nodes.initialize(m_fine->mesh, 1);
+    m_fine->matrix_format = options()->matrixFormatF();
+  }
+
+
+  
+  // m_dof_family = m_fine->dofs_on_nodes.dofFamily();///
   m_assemble_linear_system = options()->assembleLinearSystem();
   m_solve_linear_system = options()->solveLinearSystem();
   // m_cross_validation = options()->hasSolutionComparisonFile();
@@ -66,20 +66,21 @@ startInit()
 
   // Check if the mesh is a quad or hex mesh by examining the number of nodes in the first cell
   /// We suppose both meshes have the same structure.
-  UnstructuredMeshConnectivityView connectivity(m_fine->mesh); 
+  UnstructuredMeshConnectivityView connectivity(m_coarse->mesh); 
   const Int32 nb_node = connectivity.cellNode().nbNode(CellLocalId(0));
 
-  if (m_fine->mesh->dimension() == 2) {
+  if (m_coarse->mesh->dimension() == 2) {
     m_is_quad4_mesh = (nb_node == 4);
     // m_is_quad8_mesh = (nb_node == 8);
     // m_is_quad9_mesh = (nb_node == 9);
   }
-  else if (m_fine->mesh->dimension() == 3) {
+  else if (m_coarse->mesh->dimension() == 3) {
     m_is_hexa8_mesh = (nb_node == 8);
     // m_is_hexa20_mesh = (nb_node == 20);
     // m_is_hexa27_mesh = (nb_node == 27);
   }
-
+  
+  info() << "[ArcaneFem-Info] Ended module startInit()";
   elapsedTime = platform::getRealTime() - elapsedTime;
   ArcaneFemFunctions::GeneralFunctions::printArcaneFemTime(traceMng(),"initialize", elapsedTime);
 }
@@ -111,40 +112,52 @@ compute()
 
   eLinearSystemMatrixFormat format_f = eLinearSystemMatrixFormat::DoK;
   eLinearSystemMatrixFormat format_c = eLinearSystemMatrixFormat::DoK;
-  if (is_change_format_supported && (m_fine->matrix_format == "BSR" || m_fine->matrix_format == "AF-BSR"))
-    format_f = eLinearSystemMatrixFormat::Csr;
+  
+  if (m_fine) {
+    if (is_change_format_supported && (m_fine->matrix_format == "BSR" || m_fine->matrix_format == "AF-BSR"))
+      format_f = eLinearSystemMatrixFormat::Csr;
+
+    info() << "[ArcaneFem-Info] Fine matrix format used " << m_fine->matrix_format;
+    m_fine->linear_system.reset();
+    m_fine->linear_system.setLinearSystemFactory(options()->linearSystem());
+  }
+  
   if (is_change_format_supported && (m_coarse->matrix_format == "BSR" || m_coarse->matrix_format == "AF-BSR"))
     format_c = eLinearSystemMatrixFormat::Csr;
 
-  info() << "[ArcaneFem-Info] Fine matrix format used " << m_fine->matrix_format;
   info() << "[ArcaneFem-Info] Coarse matrix format used " << m_coarse->matrix_format;
-  m_fine->linear_system.reset();
   m_coarse->linear_system.reset();
-  m_fine->linear_system.setLinearSystemFactory(options()->linearSystem());
   m_coarse->linear_system.setLinearSystemFactory(options()->linearSystem());
   if (is_change_format_supported) {
-    m_fine->linear_system.initialize(subDomain(), &m_fine->runner, m_fine->dofs_on_nodes.dofFamily(), "Solver", format_f);
+    if (m_fine)
+      m_fine->linear_system.initialize(subDomain(), &m_fine->runner, m_fine->dofs_on_nodes.dofFamily(), "Solver", format_f);
     m_coarse->linear_system.initialize(subDomain(), &m_coarse->runner, m_coarse->dofs_on_nodes.dofFamily(), "Solver", format_c);
   }
   else {
-    m_fine->linear_system.initialize(subDomain(), &m_fine->runner, m_fine->dofs_on_nodes.dofFamily(), "Solver");
+    if (m_fine)
+      m_fine->linear_system.initialize(subDomain(), &m_fine->runner, m_fine->dofs_on_nodes.dofFamily(), "Solver");
     m_coarse->linear_system.initialize(subDomain(), &m_coarse->runner, m_coarse->dofs_on_nodes.dofFamily(), "Solver");
   }
 
   if (m_petsc_flags != NULL) {
     CommandLineArguments args = ArcaneFemFunctions::GeneralFunctions::getPetscFlagsFromCommandline(m_petsc_flags);
-    m_fine->linear_system.setSolverCommandLineArguments(args);
+    if (m_fine)
+      m_fine->linear_system.setSolverCommandLineArguments(args);
     m_coarse->linear_system.setSolverCommandLineArguments(args);
   }
 
-  if (m_fine->matrix_format == "BSR" || m_fine->matrix_format == "AF-BSR") {
-    bool use_csr_in_linear_system = is_change_format_supported || (name == "HypreLinearSystem");
-    if (m_fine->matrix_format == "BSR")
-      m_fine->bsr_format.initialize(m_fine->mesh, 1, use_csr_in_linear_system, 0);
-    else
-      m_fine->bsr_format.initialize(m_fine->mesh, 1, use_csr_in_linear_system, 1);
-    m_fine->bsr_format.computeSparsity();
+  if (m_fine) {
+    if (m_fine->matrix_format == "BSR" || m_fine->matrix_format == "AF-BSR") {
+      bool use_csr_in_linear_system = is_change_format_supported || (name == "HypreLinearSystem");
+      if (m_fine->matrix_format == "BSR")
+        m_fine->bsr_format.initialize(m_fine->mesh, 1, use_csr_in_linear_system, 0);
+      else
+        m_fine->bsr_format.initialize(m_fine->mesh, 1, use_csr_in_linear_system, 1);
+      m_fine->bsr_format.computeSparsity();
+    }
+    _doStationarySolve(*m_fine);
   }
+
   if (m_coarse->matrix_format == "BSR" || m_coarse->matrix_format == "AF-BSR") {
     bool use_csr_in_linear_system = is_change_format_supported || (name == "HypreLinearSystem");
     if (m_coarse->matrix_format == "BSR")
@@ -154,7 +167,6 @@ compute()
     m_coarse->bsr_format.computeSparsity();
   }
 
-  _doStationarySolve(*m_fine);
   _doStationarySolve(*m_coarse);
 
   elapsedTime = platform::getRealTime() - elapsedTime;
